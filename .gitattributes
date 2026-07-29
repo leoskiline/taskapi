@@ -1,0 +1,16 @@
+# Normalização de fim de linha travada no repositório, não na config do cliente.
+# Sem isso, um git com core.autocrlf=true (o caso desta máquina) transforma os
+# arquivos em CRLF no checkout — e um shell script ou entrypoint com CRLF quebra
+# dentro do container com o clássico "exec format error" / "\r: command not found".
+* text=auto eol=lf
+
+*.sh    text eol=lf
+*.go    text eol=lf
+*.sql   text eol=lf
+*.yml   text eol=lf
+*.yaml  text eol=lf
+Makefile text eol=lf
+Dockerfile text eol=lf
+
+*.png binary
+*.jpg binary
