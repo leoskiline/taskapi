@@ -1,0 +1,19 @@
+# Dockerfile INGÊNUO — não usar. Existe só como material de comparação do
+# exercício da Fase 2: `make image-compare` constrói os dois e mostra a
+# diferença de tamanho.
+#
+# Os três problemas, em ordem de gravidade:
+#   1. A imagem final carrega o toolchain Go, o código-fonte e o cache de build.
+#      Nada disso é necessário para executar — mas tudo isso é superfície de
+#      ataque e download em todo pull, em todo nó do cluster.
+#   2. Roda como root. Uma falha na aplicação vira root dentro do container.
+#   3. `go build` sem flags deixa símbolos de debug e caminhos absolutos da
+#      máquina de build embutidos no binário.
+FROM golang:1.26
+
+WORKDIR /src
+COPY . .
+RUN go build -o /api ./cmd/api
+
+EXPOSE 8080
+CMD ["/api"]

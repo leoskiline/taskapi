@@ -1,0 +1,63 @@
+# Compose substitui os alvos db-up/migrate-up da Fase 1: a topologia inteira
+# passa a ser declarada, não uma sequência de comandos imperativos. É o mesmo
+# salto conceitual que Kubernetes fará sobre isto na Fase 4.
+
+name: taskapi
+
+services:
+  db:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_USER: ${DB_USER:-taskapi}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-taskapi}
+      POSTGRES_DB: ${DB_NAME:-taskapi}
+    ports:
+      # Publicado só para depuração pelo host (psql, testes de integração).
+      # A API não usa esta porta: ela fala com 'db:5432' pela rede interna.
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      # Sem isto, 'depends_on' só garante que o container SUBIU, não que o
+      # Postgres já aceita conexão — e a migration falha por corrida.
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-taskapi} -d ${DB_NAME:-taskapi}"]
+      interval: 3s
+      timeout: 3s
+      retries: 10
+      start_period: 5s
+
+  migrate:
+    image: migrate/migrate:latest
+    depends_on:
+      db:
+        condition: service_healthy
+    volumes:
+      - ./migrations:/migrations:ro
+    command:
+      - "-path=/migrations"
+      - "-database=postgres://${DB_USER:-taskapi}:${DB_PASSWORD:-taskapi}@db:5432/${DB_NAME:-taskapi}?sslmode=disable"
+      - "up"
+    restart: on-failure
+
+  api:
+    build:
+      context: .
+      args:
+        VERSION: ${VERSION:-dev}
+    depends_on:
+      db:
+        condition: service_healthy
+      migrate:
+        # A API só sobe depois da migration terminar com sucesso. É a versão
+        # Compose do initContainer que aparecerá na Fase 4.
+        condition: service_completed_successfully
+    environment:
+      DATABASE_URL: postgres://${DB_USER:-taskapi}:${DB_PASSWORD:-taskapi}@db:5432/${DB_NAME:-taskapi}?sslmode=disable
+      PORT: "8080"
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+    ports:
+      - "8080:8080"
+    restart: unless-stopped
+
+volumes:
+  pgdata:

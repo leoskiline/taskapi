@@ -4,8 +4,10 @@ package main
 import (
 	"context"
 	"errors"
+	"flag"
 	"fmt"
 	"log/slog"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
@@ -19,11 +21,49 @@ import (
 	"github.com/leoskiline/taskapi/internal/task"
 )
 
+// version é sobrescrita no build com -ldflags "-X main.version=...".
+// Na Fase 3 o CI injeta aqui o SHA do commit, para que a resposta de um pod em
+// produção diga exatamente qual commit está rodando.
+var version = "dev"
+
 func main() {
+	// A imagem final é distroless: não tem shell, curl nem wget. Sem isso, o
+	// HEALTHCHECK do Dockerfile não teria o que executar. A solução é o próprio
+	// binário saber se consultar — um modo de execução, não um segundo binário.
+	healthcheck := flag.Bool("healthcheck", false, "consulta /healthz local e sai com 0 (ok) ou 1 (falha)")
+	flag.Parse()
+
+	if *healthcheck {
+		os.Exit(runHealthcheck())
+	}
+
 	if err := run(); err != nil {
 		slog.Error("encerrando com erro", "err", err)
 		os.Exit(1)
 	}
+}
+
+func runHealthcheck() int {
+	port := os.Getenv("PORT")
+	if port == "" {
+		port = "8080"
+	}
+
+	client := &http.Client{Timeout: 2 * time.Second}
+	url := "http://" + net.JoinHostPort("127.0.0.1", port) + "/healthz"
+
+	resp, err := client.Get(url) //nolint:gosec // URL montada localmente, porta vinda do ambiente do próprio processo
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "healthcheck: %v\n", err)
+		return 1
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	if resp.StatusCode != http.StatusOK {
+		fmt.Fprintf(os.Stderr, "healthcheck: status %d\n", resp.StatusCode)
+		return 1
+	}
+	return 0
 }
 
 func run() error {
@@ -68,7 +108,7 @@ func run() error {
 
 	serverErr := make(chan error, 1)
 	go func() {
-		logger.Info("servidor iniciado", "addr", srv.Addr, "log_level", cfg.LogLevel.String())
+		logger.Info("servidor iniciado", "addr", srv.Addr, "log_level", cfg.LogLevel.String(), "version", version)
 		if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			serverErr <- err
 		}

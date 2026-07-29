@@ -1,0 +1,22 @@
+# Tudo que entra aqui é enviado ao daemon como contexto de build e pode acabar
+# em uma camada da imagem. Regra: só vai o que o build precisa.
+
+.git
+.github
+bin/
+docs/
+*.md
+!README.md
+
+# Segredo em imagem é segredo publicado no registry — camada é imutável e
+# `docker history` mostra o conteúdo.
+.env
+.env.*
+!.env.example
+
+Dockerfile*
+docker-compose*.yml
+Makefile
+.golangci.yml
+.idea/
+.vscode/

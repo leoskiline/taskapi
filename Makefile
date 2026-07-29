@@ -133,6 +133,77 @@ migrate-version:
 	docker run --rm --network $(DB_NETWORK) -v "$(PWD)/migrations":/migrations $(MIGRATE_IMAGE) \
 		-path=/migrations -database "$(DATABASE_URL_DOCKER)" version
 
+# --------------------------------------------------------------- container --
+
+IMAGE   ?= taskapi
+# Tag pelo SHA do commit, nunca 'latest': é o que permite saber exatamente qual
+# código está rodando e voltar para uma versão anterior. Na Fase 3 o CI usa a
+# mesma convenção.
+VERSION ?= $(shell git rev-parse --short HEAD 2>/dev/null || echo dev)
+
+## image: constrói a imagem multi-stage distroless
+.PHONY: image
+image:
+	DOCKER_BUILDKIT=1 docker build --build-arg VERSION=$(VERSION) -t $(IMAGE):$(VERSION) -t $(IMAGE):dev .
+	@docker images $(IMAGE):$(VERSION) --format 'imagem: {{.Repository}}:{{.Tag}} — {{.Size}}'
+
+## image-naive: constrói a versão ingênua (só para o exercício de comparação)
+.PHONY: image-naive
+image-naive:
+	DOCKER_BUILDKIT=1 docker build -f Dockerfile.naive -t $(IMAGE):naive .
+
+## image-compare: mostra lado a lado o tamanho da imagem ingênua e da otimizada
+.PHONY: image-compare
+image-compare: image image-naive
+	@echo ""
+	@docker images --format 'table {{.Repository}}:{{.Tag}}\t{{.Size}}' | grep -E 'REPOSITORY|$(IMAGE)'
+	@echo ""
+	@echo "camadas da imagem final:"
+	@docker history $(IMAGE):$(VERSION) --format 'table {{.CreatedBy}}\t{{.Size}}' | head -n 8
+
+## image-run: roda a imagem contra o banco de desenvolvimento
+.PHONY: image-run
+image-run:
+	docker run --rm --name taskapi-api --network $(DB_NETWORK) -p 8080:8080 \
+		-e DATABASE_URL="$(DATABASE_URL_DOCKER)" $(IMAGE):dev
+
+## image-inspect: usuário, entrypoint e healthcheck efetivos da imagem
+.PHONY: image-inspect
+image-inspect:
+	@docker inspect $(IMAGE):dev --format 'usuário:     {{.Config.User}}'
+	@docker inspect $(IMAGE):dev --format 'entrypoint:  {{.Config.Entrypoint}}'
+	@docker inspect $(IMAGE):dev --format 'healthcheck: {{.Config.Healthcheck.Test}}'
+
+# ----------------------------------------------------------------- compose --
+
+## up: sobe a stack inteira (banco + migrations + API) via Compose
+.PHONY: up
+up:
+	# VERSION exportada para o ambiente: o Compose lê do shell, não enxerga
+	# variável de Makefile. Sem isso a imagem sai marcada como "dev".
+	VERSION=$(VERSION) docker compose up -d --build
+	@docker compose ps
+
+## down: derruba a stack (o volume permanece)
+.PHONY: down
+down:
+	docker compose down
+
+## down-all: derruba a stack e apaga o volume de dados
+.PHONY: down-all
+down-all:
+	docker compose down -v
+
+## logs: segue os logs da stack
+.PHONY: logs
+logs:
+	docker compose logs -f
+
+## ps: estado dos serviços, incluindo health
+.PHONY: ps
+ps:
+	docker compose ps
+
 # ------------------------------------------------------------------ atalhos --
 
 ## dev: banco + migrations + API, em um comando

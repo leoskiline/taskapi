@@ -4,7 +4,7 @@ API REST de tarefas em Go, usada como cobaia do laboratório DevOps descrito em 
 
 A aplicação é deliberadamente pequena. A complexidade deste repositório deve crescer na **esteira** (build, deploy, observabilidade, segurança), não nas regras de negócio.
 
-**Fase atual: 1 — aplicação + Git.** Docker, CI, Kubernetes e o resto chegam nas fases seguintes.
+**Fase atual: 2 — containerização.** CI, Kubernetes e o resto chegam nas fases seguintes.
 
 ---
 
@@ -32,15 +32,29 @@ Corpo de uma tarefa:
 
 ## Como rodar
 
-Pré-requisitos: Go 1.26+, Docker, make. Tudo dentro do WSL2.
+Pré-requisitos: Docker e make (Go só é necessário para desenvolver). Tudo dentro do WSL2.
+
+### Stack completa em container (recomendado)
 
 ```bash
-make db-up        # sobe o Postgres em container e espera ficar pronto
-make migrate-up   # aplica as migrations (golang-migrate via container)
-make run          # sobe a API em localhost:8080
+make up       # banco + migrations + API, tudo via Compose
+make ps       # estado dos serviços, incluindo health
+make logs     # logs da stack
+make down     # derruba (o volume de dados permanece)
+make down-all # derruba e apaga o volume
 ```
 
-Ou em um comando só: `make dev`.
+A API sobe em `localhost:8080`. O Compose orquestra a ordem: o banco precisa passar no `pg_isready`, a migration precisa terminar com sucesso, e só então a API sobe.
+
+### Desenvolvimento com a API fora do container
+
+Útil para iterar rápido no código sem rebuild de imagem:
+
+```bash
+make db-up        # só o Postgres, em container
+make migrate-up   # aplica as migrations
+make run          # go run local, apontando para o banco em localhost
+```
 
 ```bash
 make help         # lista todos os alvos
@@ -72,6 +86,32 @@ Falta de `DATABASE_URL` derruba o processo na partida, de propósito: no Kuberne
 
 ---
 
+## A imagem
+
+```bash
+make image          # multi-stage distroless
+make image-compare  # constrói as duas versões e mostra a diferença
+make image-inspect  # usuário, entrypoint e healthcheck efetivos
+```
+
+Resultado medido nesta máquina:
+
+| Imagem | Tamanho |
+|---|---|
+| `Dockerfile.naive` — `FROM golang`, o caminho óbvio | **1,55 GB** |
+| `Dockerfile` — multi-stage + distroless | **21,3 MB** |
+
+73x. O `Dockerfile.naive` existe só para essa comparação; não use.
+
+Detalhes que valem entender ([ADR 0003](docs/decisions/0003-imagem-distroless-multi-stage.md)):
+
+- **`go.mod`/`go.sum` são copiados antes do código.** Enquanto as dependências não mudarem, a camada de `go mod download` vem do cache. Copiar tudo de uma vez invalidaria o cache a cada linha alterada.
+- **`CGO_ENABLED=0`** é o que permite a imagem final ser `static` — sem libc, sem linker dinâmico.
+- **Roda como uid 65532**, confirmado com `docker top`. Não como root.
+- **Não há shell na imagem.** `docker exec taskapi-api-1 sh` falha, e isso é intencional. Depuração se faz por log e métrica; quando for realmente necessário um shell, a saída é `kubectl debug` com container efêmero (Fase 4).
+- **O `HEALTHCHECK` chama `/api -healthcheck`**, um modo do próprio binário — porque sem shell não existe `curl` para chamar.
+- **A tag é o SHA do commit**, nunca `latest`. `latest` em deploy significa não saber o que está rodando nem para onde voltar.
+
 ## Decisões que importam para as próximas fases
 
 **Sem framework web.** Roteamento com o `net/http` do Go 1.22+ (`mux.HandleFunc("GET /tasks/{id}", ...)`). Menos dependência para atualizar e menos superfície para o Trivy reclamar na Fase 9.
@@ -97,16 +137,19 @@ Falta de `DATABASE_URL` derruba o processo na partida, de propósito: no Kuberne
 ## Estrutura
 
 ```
-cmd/api/          entrypoint: config, wiring, servidor, shutdown
-internal/config/  carga e validação do ambiente
-internal/task/    domínio: modelo, validação, Store (porta + Postgres), handlers
-internal/httpx/   middleware de log de request
-migrations/       SQL versionado (golang-migrate)
-docs/decisions/   ADRs — por que cada escolha foi feita
+cmd/api/            entrypoint: config, wiring, servidor, shutdown, modo -healthcheck
+internal/config/    carga e validação do ambiente
+internal/task/      domínio: modelo, validação, Store (porta + Postgres), handlers
+internal/httpx/     middleware de log de request
+migrations/         SQL versionado (golang-migrate)
+docs/decisions/     ADRs — por que cada escolha foi feita
+Dockerfile          multi-stage, imagem final distroless não-root
+Dockerfile.naive    contra-exemplo, só para o exercício de comparação
+docker-compose.yml  banco + migrations + API, com ordem garantida por health
 ```
 
 ---
 
 ## Próxima fase
 
-**Fase 2 — containerização:** `Dockerfile` multi-stage com imagem final distroless, usuário não-root e `docker-compose.yml` substituindo os alvos `db-up`/`migrate-up` deste Makefile.
+**Fase 3 — CI:** GitHub Actions rodando `make lint` e `make test` em cada PR, com service container de Postgres para os testes de integração, publicando a imagem no GHCR com tag por SHA.
