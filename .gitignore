@@ -1,0 +1,15 @@
+bin/
+*.exe
+*.test
+*.out
+coverage.*
+
+# Nunca commitar arquivo de ambiente: a partir da Fase 3 um segredo vazado
+# aqui é pego pelo gitleaks, mas o histórico do git não esquece.
+.env
+.env.*
+!.env.example
+
+.idea/
+.vscode/
+.DS_Store

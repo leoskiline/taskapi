@@ -1,0 +1,33 @@
+# Config do golangci-lint. Fica no repo (e não só no comando do CI) para que
+# `make lint` local e o pipeline da Fase 3 apliquem exatamente as mesmas regras.
+version: "2"
+
+linters:
+  enable:
+    - errcheck      # erro ignorado é bug esperando acontecer
+    - govet
+    - staticcheck
+    - ineffassign
+    - unused
+    - bodyclose     # response body não fechado = vazamento de conexão
+    - errorlint     # força %w e errors.Is/As em vez de comparação com ==
+    - gosec         # base do DevSecOps que aprofunda na Fase 9
+    - misspell
+
+  settings:
+    gosec:
+      excludes:
+        - G404  # math/rand: não há uso criptográfico aqui
+
+  exclusions:
+    rules:
+      # Testes podem ser mais soltos: falha de asserção já é o sinal.
+      - path: _test\.go
+        linters:
+          - errcheck
+          - gosec
+
+formatters:
+  enable:
+    - gofmt
+    - goimports
