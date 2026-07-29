@@ -40,6 +40,11 @@ services:
     restart: on-failure
 
   api:
+    # Sem esta linha o Compose nomearia a imagem como 'taskapi-api:latest' —
+    # exatamente o 'latest' que este projeto evita. Com ela, a imagem
+    # construída pelo Compose e a construída por 'make image' têm o mesmo nome
+    # e a mesma tag.
+    image: taskapi:${VERSION:-dev}
     build:
       context: .
       args:
