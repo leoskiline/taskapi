@@ -22,8 +22,11 @@ DATABASE_URL ?= postgres://$(DB_USER):$(DB_PASSWORD)@localhost:$(DB_PORT)/$(DB_N
 # problemas de rede da Fase 2.
 DATABASE_URL_DOCKER := postgres://$(DB_USER):$(DB_PASSWORD)@$(DB_CONTAINER):5432/$(DB_NAME)?sslmode=disable
 
-MIGRATE_IMAGE ?= migrate/migrate:latest
-LINT_IMAGE    ?= golangci/golangci-lint:latest
+# Versões pinadas: com ':latest' o mesmo commit passa hoje e falha amanhã
+# porque uma imagem mudou sozinha. Em CI isso vira "quebrou e eu não mexi em
+# nada" — o pior tipo de falha para depurar. Atualizar é um commit consciente.
+MIGRATE_IMAGE ?= migrate/migrate:v4.19.1
+LINT_IMAGE    ?= golangci/golangci-lint:v2.12.2
 
 .DEFAULT_GOAL := help
 
@@ -218,6 +221,21 @@ smoke:
 	curl -fsS localhost:8080/readyz; echo; \
 	curl -fsS -X POST localhost:8080/tasks -d '{"title":"tarefa de fumaça"}'; echo; \
 	curl -fsS localhost:8080/tasks; echo
+
+## ci: roda localmente a mesma sequência do pipeline (lint + testes)
+.PHONY: ci
+ci: lint test
+	$(MAKE) db-up
+	$(MAKE) test-integration
+	@echo ""
+	@echo "verde local — mesma sequência que o CI executa"
+
+## ci-lint: valida a sintaxe dos workflows do GitHub Actions sem dar push
+.PHONY: ci-lint
+ci-lint:
+	docker run --rm -v "$(PWD)":/repo -w /repo $(ACTIONLINT_IMAGE) -color
+
+ACTIONLINT_IMAGE ?= rhysd/actionlint:1.7.7
 
 ## clean: remove artefatos de build
 .PHONY: clean

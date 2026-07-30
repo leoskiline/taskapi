@@ -1,0 +1,174 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# Permissão mínima por padrão; cada job pede só o que precisa. O GITHUB_TOKEN
+# nasce com escopo amplo se você não declarar nada — e um token com permissão
+# de escrita exposto a um step de terceiros é o vetor clássico de ataque em CI.
+permissions:
+  contents: read
+
+# Um push novo no mesmo branch cancela a execução anterior. Sem isso, uma
+# sequência de commits enfileira builds que já nasceram obsoletos.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}
+
+jobs:
+  lint:
+    name: lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          # Lê a versão do go.mod: uma fonte de verdade só. Trocar a versão do
+          # Go passa a ser um commit no go.mod, não uma edição em dois lugares.
+          go-version-file: go.mod
+          cache: true
+
+      # Roda o MESMO alvo que você roda local. Custa um pull da imagem do
+      # golangci-lint (~1 min); a alternativa seria a golangci-lint-action, mais
+      # rápida, mas aí CI e máquina local poderiam divergir de versão.
+      - name: make lint
+        run: make lint
+
+  test:
+    name: test
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_USER: taskapi
+          POSTGRES_PASSWORD: taskapi
+          POSTGRES_DB: taskapi
+        ports:
+          - 5432:5432
+        # Sem health check o job começa a testar com o Postgres ainda subindo,
+        # e a falha aparece como "connection refused" intermitente.
+        options: >-
+          --health-cmd "pg_isready -U taskapi -d taskapi"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: testes unitários
+        run: make test
+
+      # Os defaults do Makefile já apontam para localhost:5432 com as mesmas
+      # credenciais do service container acima — nenhuma configuração especial
+      # de CI é necessária.
+      - name: testes de integração
+        run: make test-integration
+
+  smoke:
+    name: smoke (stack completa)
+    runs-on: ubuntu-latest
+    needs: [lint, test]
+    steps:
+      - uses: actions/checkout@v4
+
+      # Verifica o artefato de verdade: imagem construída pelo Dockerfile,
+      # migrations aplicadas na ordem certa, API respondendo. É o que pega erro
+      # que teste unitário não vê — variável faltando, ordem de dependência,
+      # binário que não roda na imagem distroless.
+      - name: sobe a stack
+        run: VERSION=${{ github.sha }} docker compose up -d --build
+
+      - name: espera ficar healthy
+        run: |
+          for _ in $(seq 1 30); do
+            status=$(docker inspect --format '{{.State.Health.Status}}' taskapi-api-1 2>/dev/null || echo starting)
+            [ "$status" = "healthy" ] && exit 0
+            sleep 2
+          done
+          echo "API não ficou healthy a tempo"
+          exit 1
+
+      - name: exercita a API
+        run: |
+          set -euo pipefail
+          curl -fsS localhost:8080/healthz
+          curl -fsS localhost:8080/readyz
+          curl -fsS -X POST localhost:8080/tasks -d '{"title":"smoke test do CI"}'
+          curl -fsS localhost:8080/tasks | grep -q "smoke test do CI"
+
+      # Log da stack quando algo falha: sem isto, um smoke vermelho vira
+      # adivinhação sobre qual dos três serviços quebrou.
+      - name: logs (só em caso de falha)
+        if: failure()
+        run: docker compose logs
+
+      - name: derruba
+        if: always()
+        run: docker compose down -v
+
+  image:
+    name: build da imagem
+    runs-on: ubuntu-latest
+    needs: [lint, test, smoke]
+    permissions:
+      contents: read
+      packages: write   # necessário para publicar no GHCR
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-buildx-action@v3
+
+      # Em pull request não publica nada: um PR de fora do repositório não deve
+      # conseguir empurrar imagem para o registry.
+      - name: login no GHCR
+        if: github.event_name != 'pull_request'
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: metadados e tags
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          # Sem tag 'latest', de propósito: uma tag móvel apagaria a
+          # rastreabilidade que o resto do projeto tenta manter. Quem quiser a
+          # última versão de main usa a tag 'main', que também se move mas diz
+          # de onde veio.
+          tags: |
+            type=sha,format=short,prefix=
+            type=ref,event=branch
+
+      - name: build e push
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          # Multi-arch só no push para main: emular arm64 no runner amd64 é
+          # lento demais para gastar em cada PR.
+          platforms: ${{ github.event_name == 'pull_request' && 'linux/amd64' || 'linux/amd64,linux/arm64' }}
+          push: ${{ github.event_name != 'pull_request' }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          build-args: |
+            VERSION=${{ github.sha }}
+          # Cache de camadas entre execuções do Actions.
+          cache-from: type=gha
+          cache-to: type=gha,mode=max

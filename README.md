@@ -4,7 +4,7 @@ API REST de tarefas em Go, usada como cobaia do laboratório DevOps descrito em 
 
 A aplicação é deliberadamente pequena. A complexidade deste repositório deve crescer na **esteira** (build, deploy, observabilidade, segurança), não nas regras de negócio.
 
-**Fase atual: 2 — containerização.** CI, Kubernetes e o resto chegam nas fases seguintes.
+**Fase atual: 3 — CI.** Kubernetes, IaC e observabilidade chegam nas fases seguintes.
 
 ---
 
@@ -112,6 +112,46 @@ Detalhes que valem entender ([ADR 0003](docs/decisions/0003-imagem-distroless-mu
 - **O `HEALTHCHECK` chama `/api -healthcheck`**, um modo do próprio binário — porque sem shell não existe `curl` para chamar.
 - **A tag é o SHA do commit**, nunca `latest`. `latest` em deploy significa não saber o que está rodando nem para onde voltar.
 
+## CI
+
+`.github/workflows/ci.yml` roda em todo push na `main` e em todo pull request:
+
+| Job | O que faz |
+|---|---|
+| `lint` | `make lint` |
+| `test` | `make test` + `make test-integration` contra um service container Postgres |
+| `smoke` | sobe a stack Compose inteira e exercita a API de verdade |
+| `image` | build multi-arch e push para o GHCR — **só na `main`**, nunca em PR |
+
+O ponto do job `smoke`: teste unitário não pega variável de ambiente faltando, ordem errada de dependência nem binário que não roda na imagem distroless. Ele valida o artefato, não o código.
+
+```bash
+make ci        # roda local a mesma sequência do pipeline
+make ci-lint   # valida a sintaxe dos workflows (actionlint) sem dar push
+```
+
+`make ci-lint` já pagou por si: pegou um `SC2034` no loop de espera antes do primeiro push.
+
+Decisões do pipeline ([ADR 0004](docs/decisions/0004-ci-chama-os-alvos-do-makefile.md)):
+
+- **O CI chama os alvos do Makefile**, não comandos próprios. Falha de CI se depura rodando `make ci` local, não empurrando commits de tentativa.
+- **`permissions: contents: read` no topo**, e só o job `image` pede `packages: write`. Token amplo exposto a step de terceiro é o vetor clássico de ataque em CI.
+- **PR não publica imagem.** Um PR vindo de fork não deve conseguir empurrar nada para o registry.
+- **Versões das ferramentas pinadas** (`golangci-lint:v2.12.2`, `migrate:v4.19.1`). Com `:latest`, o mesmo commit passa hoje e falha amanhã sem nenhum diff para olhar.
+- **Sem tag `latest` no registry.** Quem quiser a ponta da `main` usa a tag `main`, que ao menos diz de onde veio.
+- **Dependabot** acompanha três superfícies: módulos Go, imagens base e as próprias actions.
+
+### Ainda pendente nesta fase
+
+O repositório é local. Para o CI existir de fato falta criar o remote e ligar a proteção de branch:
+
+```bash
+git remote add origin git@github.com:leoskiline/taskapi.git
+git push -u origin main
+```
+
+Depois, em **Settings → Branches → Add rule** na `main`: exigir PR antes do merge e exigir os checks `lint`, `test` e `smoke` verdes. Sem isso o pipeline roda mas não impede nada — e o critério de conclusão da fase é justamente ver um PR com teste quebrado ser **bloqueado**.
+
 ## Decisões que importam para as próximas fases
 
 **Sem framework web.** Roteamento com o `net/http` do Go 1.22+ (`mux.HandleFunc("GET /tasks/{id}", ...)`). Menos dependência para atualizar e menos superfície para o Trivy reclamar na Fase 9.
@@ -152,4 +192,4 @@ docker-compose.yml  banco + migrations + API, com ordem garantida por health
 
 ## Próxima fase
 
-**Fase 3 — CI:** GitHub Actions rodando `make lint` e `make test` em cada PR, com service container de Postgres para os testes de integração, publicando a imagem no GHCR com tag por SHA.
+**Fase 4 — Kubernetes:** cluster kind com 3 nós e os manifestos escritos à mão (Deployment, Service, ConfigMap, Secret, Ingress, StatefulSet do Postgres) antes de conhecer Helm.

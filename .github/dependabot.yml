@@ -1,0 +1,32 @@
+version: 2
+
+# Três ecossistemas, porque este repositório tem três superfícies de
+# dependência — e esquecer qualquer uma delas é como o projeto envelhece sem
+# ninguém perceber.
+updates:
+  # 1. Dependências Go.
+  - package-ecosystem: gomod
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: "chore(deps)"
+
+  # 2. Imagens base do Dockerfile. É por aqui que chega correção de CVE da
+  #    imagem distroless — o Trivy da Fase 9 vai cobrar isso.
+  - package-ecosystem: docker
+    directory: /
+    schedule:
+      interval: weekly
+    commit-message:
+      prefix: "chore(deps)"
+
+  # 3. Actions do próprio CI. Action desatualizada é código de terceiro rodando
+  #    com o GITHUB_TOKEN do repositório.
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    commit-message:
+      prefix: "chore(ci)"
