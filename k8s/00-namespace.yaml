@@ -1,0 +1,8 @@
+# Namespace próprio: isola quota, NetworkPolicy (Fase 9) e RBAC, e permite
+# apagar o ambiente inteiro com um `kubectl delete ns taskapi`.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: taskapi
+  labels:
+    app.kubernetes.io/part-of: taskapi

@@ -1,0 +1,27 @@
+# Cluster de laboratório: 1 control-plane + 2 workers.
+#
+# Por que mais de um worker: com um nó só, agendamento é trivial e conceitos
+# como anti-afinidade, drain de nó e distribuição de réplicas ficam invisíveis.
+kind: Cluster
+apiVersion: kind.x-k8s.io/v1alpha4
+name: taskapi
+
+nodes:
+  - role: control-plane
+    kubeadmConfigPatches:
+      # O ingress-nginx da receita do kind só agenda em nó com este label.
+      - |
+        kind: InitConfiguration
+        nodeRegistration:
+          kubeletExtraArgs:
+            node-labels: "ingress-ready=true"
+    extraPortMappings:
+      # Ponte entre a máquina e o cluster: localhost:8081 chega no Ingress.
+      # Sem isto o Service do ingress-nginx existiria, mas seria inalcançável
+      # do host — nós do kind são containers em uma rede própria do Docker.
+      - containerPort: 80
+        hostPort: 8081
+        protocol: TCP
+
+  - role: worker
+  - role: worker

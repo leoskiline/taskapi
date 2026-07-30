@@ -1,0 +1,107 @@
+# Postgres como StatefulSet, não Deployment. A diferença não é estética:
+#   - identidade estável (postgres-0 continua postgres-0 após reagendamento);
+#   - cada réplica ganha seu próprio PVC via volumeClaimTemplates;
+#   - criação e término são ordenados.
+# Um Deployment com PVC compartilhado levaria duas réplicas a escrever no mesmo
+# diretório de dados — corrupção garantida.
+apiVersion: v1
+kind: Service
+metadata:
+  name: postgres
+  namespace: taskapi
+  labels:
+    app.kubernetes.io/name: postgres
+spec:
+  # clusterIP: None = Service headless. Não há balanceamento: o DNS resolve
+  # direto para o IP do pod. É o que dá endereço estável a cada réplica.
+  clusterIP: None
+  selector:
+    app.kubernetes.io/name: postgres
+  ports:
+    - name: postgres
+      port: 5432
+      targetPort: 5432
+
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: postgres
+  namespace: taskapi
+spec:
+  serviceName: postgres
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: postgres
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: postgres
+    spec:
+      securityContext:
+        # A imagem oficial do Postgres roda como uid 999 (postgres). fsGroup
+        # garante que o volume montado pertença a esse grupo — sem isto o
+        # container sobe e falha com "permission denied" no diretório de dados.
+        fsGroup: 999
+      containers:
+        - name: postgres
+          image: postgres:17-alpine
+          ports:
+            - name: postgres
+              containerPort: 5432
+          env:
+            - name: POSTGRES_USER
+              valueFrom:
+                secretKeyRef:
+                  name: taskapi-secret
+                  key: POSTGRES_USER
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: taskapi-secret
+                  key: POSTGRES_PASSWORD
+            - name: POSTGRES_DB
+              valueFrom:
+                secretKeyRef:
+                  name: taskapi-secret
+                  key: POSTGRES_DB
+            # Dados em um subdiretório do volume. Se PGDATA apontasse para a
+            # raiz do mount, o Postgres se recusaria a inicializar em volume
+            # que não estivesse vazio (lost+found em muitos storage classes).
+            - name: PGDATA
+              value: /var/lib/postgresql/data/pgdata
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/postgresql/data
+          readinessProbe:
+            exec:
+              command: ["pg_isready", "-U", "taskapi", "-d", "taskapi"]
+            initialDelaySeconds: 5
+            periodSeconds: 5
+            timeoutSeconds: 3
+          livenessProbe:
+            exec:
+              command: ["pg_isready", "-U", "taskapi", "-d", "taskapi"]
+            initialDelaySeconds: 20
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 6
+          resources:
+            requests:
+              cpu: 50m
+              memory: 128Mi
+            limits:
+              memory: 512Mi
+
+  # volumeClaimTemplates cria um PVC por réplica. No kind, quem atende é o
+  # local-path-provisioner, que grava em disco do nó — se o nó morrer, o dado
+  # morre junto. Em nuvem, aqui entraria uma StorageClass de disco de rede.
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        resources:
+          requests:
+            storage: 1Gi

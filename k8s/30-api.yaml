@@ -1,0 +1,162 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: taskapi
+  namespace: taskapi
+  labels:
+    app.kubernetes.io/name: taskapi
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: taskapi
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      # Sobe o novo antes de derrubar o velho: com 2 réplicas e maxUnavailable
+      # 0, o rollout nunca reduz a capacidade disponível.
+      maxSurge: 1
+      maxUnavailable: 0
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: taskapi
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        seccompProfile:
+          type: RuntimeDefault
+
+      # A migration roda ANTES do container principal e precisa terminar com
+      # sucesso. É a tradução do 'service_completed_successfully' do Compose.
+      #
+      # Ressalva honesta: com várias réplicas, cada pod roda seu initContainer.
+      # O golang-migrate usa lock no banco, então não corrompe — mas em produção
+      # o padrão é um Job separado ou um hook de deploy (Argo, Fase 7), para que
+      # a migration rode uma vez por release e não uma vez por pod.
+      initContainers:
+        - name: migrate
+          image: migrate/migrate:v4.19.1
+          args:
+            - "-path=/migrations"
+            - "-database=$(DATABASE_URL)"
+            - "up"
+          env:
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: taskapi-secret
+                  key: DATABASE_URL
+          volumeMounts:
+            - name: migrations
+              mountPath: /migrations
+              readOnly: true
+          resources:
+            requests:
+              cpu: 20m
+              memory: 32Mi
+            limits:
+              memory: 64Mi
+
+      containers:
+        - name: api
+          image: ghcr.io/leoskiline/taskapi:c52503b
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: http
+              containerPort: 8080
+
+          # envFrom traz o ConfigMap inteiro; o Secret entra chave a chave,
+          # para deixar explícito no manifesto o que é segredo.
+          envFrom:
+            - configMapRef:
+                name: taskapi-config
+          env:
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: taskapi-secret
+                  key: DATABASE_URL
+
+          # As três sondas, com papéis distintos:
+          #
+          # startupProbe  — dá tempo para subir. Enquanto ela não passa, as
+          #                 outras duas ficam suspensas. Sem ela, uma partida
+          #                 lenta seria interpretada como travamento e o pod
+          #                 entraria em loop de reinício.
+          # readinessProbe— "posso receber tráfego?". Falhou, sai do Service,
+          #                 mas o container continua vivo.
+          # livenessProbe — "preciso ser reiniciado?". Falhou, o kubelet mata.
+          #
+          # Por isso a liveness aponta para /healthz (não toca no banco) e a
+          # readiness para /readyz (faz ping). Uma queda do Postgres tira os
+          # pods do balanceamento sem reiniciá-los — ADR 0001.
+          startupProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            periodSeconds: 2
+            failureThreshold: 15
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: http
+            periodSeconds: 5
+            timeoutSeconds: 3
+            failureThreshold: 2
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 3
+
+          # requests = o que o scheduler reserva para escolher o nó.
+          # limits   = o teto. Estourar o de memória é OOMKilled na hora;
+          #            estourar o de CPU só causa throttling.
+          # Sem requests, o scheduler acha que o pod não custa nada e empilha
+          # tudo em um nó só.
+          resources:
+            requests:
+              cpu: 50m
+              memory: 32Mi
+            limits:
+              memory: 128Mi
+
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+
+      volumes:
+        - name: migrations
+          configMap:
+            name: taskapi-migrations
+
+      # Espalha as réplicas entre os nós. Com as duas no mesmo nó, perder aquele
+      # nó derruba o serviço inteiro — e o Deployment pareceria saudável até lá.
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels:
+              app.kubernetes.io/name: taskapi
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: taskapi
+  namespace: taskapi
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: taskapi
+  ports:
+    - name: http
+      port: 80
+      targetPort: http

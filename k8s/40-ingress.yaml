@@ -1,0 +1,26 @@
+# O Service é ClusterIP: só existe dentro do cluster. O Ingress é a porta de
+# entrada — regra L7 que o ingress-nginx traduz em configuração de proxy.
+#
+# Caminho completo de um request:
+#   curl -> hostPort 8081 do nó (kind) -> Service do ingress-nginx ->
+#   pod do controller -> Endpoints do Service taskapi -> pod da API
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: taskapi
+  namespace: taskapi
+spec:
+  ingressClassName: nginx
+  rules:
+    # localtest.me resolve para 127.0.0.1 no DNS público — evita mexer em
+    # /etc/hosts para ter um hostname de verdade no laboratório.
+    - host: taskapi.localtest.me
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: taskapi
+                port:
+                  name: http
