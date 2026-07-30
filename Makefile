@@ -207,6 +207,60 @@ logs:
 ps:
 	docker compose ps
 
+# -------------------------------------------------------------- kubernetes --
+
+CLUSTER   ?= taskapi
+NAMESPACE ?= taskapi
+
+## cluster-up: cria o cluster kind (3 nós) e instala o ingress-nginx
+.PHONY: cluster-up
+cluster-up:
+	kind create cluster --config k8s/kind-config.yaml
+	kubectl apply -f https://raw.githubusercontent.com/kubernetes/ingress-nginx/main/deploy/static/provider/kind/deploy.yaml
+	kubectl wait --namespace ingress-nginx --for=condition=ready pod \
+		--selector=app.kubernetes.io/component=controller --timeout=300s
+
+## cluster-down: apaga o cluster inteiro
+.PHONY: cluster-down
+cluster-down:
+	kind delete cluster --name $(CLUSTER)
+
+## k8s-apply: aplica os manifestos (inclui o ConfigMap das migrations)
+.PHONY: k8s-apply
+k8s-apply:
+	kubectl apply -f k8s/00-namespace.yaml
+	# As migrations viram ConfigMap gerado a partir dos arquivos .sql, para não
+	# manter o mesmo SQL em dois lugares. Na Fase 5 o Helm faz isso nativamente.
+	kubectl create configmap taskapi-migrations -n $(NAMESPACE) \
+		--from-file=migrations --dry-run=client -o yaml | kubectl apply -f -
+	kubectl apply -f k8s/10-config.yaml -f k8s/20-postgres.yaml -f k8s/30-api.yaml -f k8s/40-ingress.yaml
+	kubectl rollout status deployment/taskapi -n $(NAMESPACE) --timeout=300s
+
+## k8s-status: visão geral do namespace
+.PHONY: k8s-status
+k8s-status:
+	@kubectl get pods,svc,ingress,pvc -n $(NAMESPACE) -o wide
+
+## k8s-logs: logs de todas as réplicas da API
+.PHONY: k8s-logs
+k8s-logs:
+	kubectl logs -n $(NAMESPACE) -l app.kubernetes.io/name=taskapi --tail=50 -f --prefix
+
+## k8s-smoke: exercita a API através do Ingress
+.PHONY: k8s-smoke
+k8s-smoke:
+	@set -e; \
+	H=http://taskapi.localtest.me:8081; \
+	curl -fsS $$H/healthz; echo; \
+	curl -fsS $$H/readyz; echo; \
+	curl -fsS -X POST $$H/tasks -d '{"title":"rodando no kubernetes"}'; echo; \
+	curl -fsS $$H/tasks; echo
+
+## k8s-delete: remove a aplicação, preservando o cluster
+.PHONY: k8s-delete
+k8s-delete:
+	kubectl delete namespace $(NAMESPACE)
+
 # ------------------------------------------------------------------ atalhos --
 
 ## dev: banco + migrations + API, em um comando

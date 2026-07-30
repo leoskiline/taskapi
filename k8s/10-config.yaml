@@ -1,0 +1,34 @@
+# A mesma imagem roda em qualquer ambiente; o que muda é o que se injeta nela.
+# É por isso que a Fase 1 insistiu em configuração só por variável de ambiente.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: taskapi-config
+  namespace: taskapi
+data:
+  PORT: "8080"
+  LOG_LEVEL: "info"
+  SHUTDOWN_TIMEOUT: "10s"
+
+---
+# ATENÇÃO: Secret do Kubernetes NÃO é criptografia. O conteúdo fica em base64
+# no etcd, legível por quem tiver acesso à API ou ao disco do control-plane.
+# Isto aqui é banco descartável de laboratório. Na Fase 9 este arquivo some e
+# vira External Secrets + Vault (ou SOPS + age), aí sim com segredo cifrado
+# antes de tocar o repositório.
+#
+# stringData existe só para o YAML ficar legível — o Kubernetes converte para
+# base64 ao salvar. Não confunda com "não codificado".
+apiVersion: v1
+kind: Secret
+metadata:
+  name: taskapi-secret
+  namespace: taskapi
+type: Opaque
+stringData:
+  POSTGRES_USER: taskapi
+  POSTGRES_PASSWORD: taskapi
+  POSTGRES_DB: taskapi
+  # O host 'postgres' é resolvido pelo DNS interno do cluster (CoreDNS) para o
+  # Service homônimo. Mesma ideia do nome de serviço no Compose, um nível acima.
+  DATABASE_URL: postgres://taskapi:taskapi@postgres:5432/taskapi?sslmode=disable
