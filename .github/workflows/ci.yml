@@ -158,7 +158,7 @@ jobs:
             type=ref,event=branch
 
       - name: build e push
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: .
           # Multi-arch só no push para main: emular arm64 no runner amd64 é
