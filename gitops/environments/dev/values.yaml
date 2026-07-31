@@ -1,0 +1,41 @@
+# Estado desejado do ambiente dev — a fonte da verdade do que está rodando.
+#
+# Este arquivo é o contrato entre o CI e o cluster: o pipeline abre um PR
+# mudando `image.tag`, e o merge é o deploy. Ninguém roda `helm upgrade` na mão.
+#
+# Não confundir com charts/taskapi/values-dev.yaml: aquele é o default do
+# CHART (como a aplicação se comporta em dev), este é o estado do AMBIENTE
+# (qual versão está implantada agora). A separação é o que permite promover
+# uma imagem de dev para staging sem tocar no chart.
+
+replicaCount: 1
+
+image:
+  repository: ghcr.io/leoskiline/taskapi
+  # ATUALIZADO PELO CI — o job de deploy abre PR trocando esta linha.
+  tag: c52503b
+
+config:
+  logLevel: debug
+
+resources:
+  requests:
+    cpu: 20m
+    memory: 32Mi
+  limits:
+    memory: 128Mi
+
+topologySpread:
+  enabled: false
+
+postgresql:
+  enabled: true
+  primary:
+    persistence:
+      size: 1Gi
+    resources:
+      requests:
+        cpu: 20m
+        memory: 128Mi
+      limits:
+        memory: 256Mi

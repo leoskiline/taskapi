@@ -57,6 +57,48 @@ variable "app_image_tag" {
   default     = "c52503b"
 }
 
+variable "manage_app_with_terraform" {
+  description = "Se true, o Terraform instala o chart. Com GitOps ligado deve ser false — os dois gerenciando o mesmo release brigam."
+  type        = bool
+  default     = false
+}
+
+variable "enable_gitops" {
+  description = "Instala o Argo CD e cria a Application da taskapi"
+  type        = bool
+  default     = true
+}
+
+variable "argocd_version" {
+  description = "Versão do chart do Argo CD"
+  type        = string
+  default     = "10.2.2"
+}
+
+variable "argocd_apps_version" {
+  description = "Versão do chart argocd-apps"
+  type        = string
+  default     = "2.0.5"
+}
+
+variable "argocd_host" {
+  description = "Hostname do Ingress do Argo CD"
+  type        = string
+  default     = "argocd.localtest.me"
+}
+
+variable "repo_url" {
+  description = "Repositório que o Argo CD observa"
+  type        = string
+  default     = "https://github.com/leoskiline/taskapi.git"
+}
+
+variable "target_revision" {
+  description = "Branch acompanhada pelo Argo CD"
+  type        = string
+  default     = "main"
+}
+
 variable "app_environment" {
   description = "Qual values-<env>.yaml do chart usar"
   type        = string

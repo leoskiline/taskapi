@@ -15,7 +15,18 @@ output "app_url" {
   value       = "http://taskapi.localtest.me:${var.ingress_host_port}"
 }
 
+# Com module.app usando count, os atributos viram lista. try() evita que o
+# output quebre quando o módulo está desligado — que é o padrão desde a Fase 7.
 output "app_image_digest" {
-  description = "Digest resolvido no apply — é o que realmente foi implantado"
-  value       = module.app.image_digest
+  description = "Digest resolvido no apply (só quando o Terraform gerencia a app)"
+  value       = try(module.app[0].image_digest, "gerenciado pelo Argo CD")
+}
+
+output "argocd_url" {
+  description = "Interface do Argo CD"
+  value       = try("${module.gitops[0].url}:${var.ingress_host_port}", "gitops desligado")
+}
+
+output "argocd_admin_password_command" {
+  value = try(module.gitops[0].admin_password_command, "gitops desligado")
 }

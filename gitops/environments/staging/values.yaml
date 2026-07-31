@@ -1,0 +1,31 @@
+# Estado desejado do ambiente staging.
+#
+# Repare que a tag pode ficar ATRÁS da de dev: é assim que promoção funciona.
+# Uma imagem sobe para dev, é observada, e só então um segundo PR a promove
+# para cá. O git guarda quem promoveu o quê e quando — sem isso, "o que está
+# em staging?" vira uma pergunta para o Slack.
+
+replicaCount: 2
+
+image:
+  repository: ghcr.io/leoskiline/taskapi
+  tag: c52503b
+
+config:
+  logLevel: info
+
+resources:
+  requests:
+    cpu: 50m
+    memory: 32Mi
+  limits:
+    memory: 128Mi
+
+topologySpread:
+  enabled: true
+
+postgresql:
+  enabled: true
+  primary:
+    persistence:
+      size: 2Gi

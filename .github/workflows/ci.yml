@@ -3,6 +3,16 @@ name: CI
 on:
   push:
     branches: [main]
+    # Sem isto, GitOps no mesmo repositório vira um loop infinito: o job de
+    # promoção abre um PR mudando gitops/, o merge empurra para main, a CI
+    # roda de novo, publica outra imagem e abre outro PR — para sempre.
+    #
+    # O filtro fica só no push. O gatilho de pull_request continua sem filtro,
+    # porque a branch protection exige os checks verdes para permitir o merge —
+    # e um PR sem check nenhum ficaria travado para sempre.
+    paths-ignore:
+      - 'gitops/**'
+      - '**.md'
   pull_request:
 
 # Permissão mínima por padrão; cada job pede só o que precisa. O GITHUB_TOKEN
@@ -172,3 +182,47 @@ jobs:
           # Cache de camadas entre execuções do Actions.
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+  promote:
+    name: promove para dev (abre PR)
+    runs-on: ubuntu-latest
+    needs: [image]
+    # Só na main: um PR não deve poder promover nada.
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    permissions:
+      contents: write
+      pull-requests: write
+
+    steps:
+      - uses: actions/checkout@v7
+
+      # Fim do pipeline: o CI NÃO faz deploy. Ele só propõe uma mudança no
+      # estado desejado, em git. Quem aplica é o Argo CD, quando o PR for
+      # mergeado. É o que separa "integração contínua" de "entrega contínua"
+      # sem dar ao runner credencial de cluster.
+      - name: atualiza a tag da imagem em gitops/environments/dev
+        run: |
+          set -euo pipefail
+          SHORT_SHA=$(git rev-parse --short "${{ github.sha }}")
+          sed -i "s|^  tag: .*|  tag: ${SHORT_SHA}|" gitops/environments/dev/values.yaml
+          git diff --stat
+
+      - name: abre o PR de promoção
+        uses: peter-evans/create-pull-request@v7
+        with:
+          branch: promote/dev
+          # Um branch só, reaproveitado: PRs de promoção não devem se
+          # acumular. O mais recente substitui o anterior.
+          delete-branch: true
+          commit-message: "chore(gitops): promove ${{ github.sha }} para dev"
+          title: "chore(gitops): promove imagem para dev"
+          body: |
+            Promoção automática do CI.
+
+            - Commit: ${{ github.sha }}
+            - Imagem: `ghcr.io/${{ github.repository }}`
+            - Ambiente: dev
+
+            O merge deste PR é o deploy: o Argo CD reconcilia o cluster contra
+            o `main` e aplica a nova tag.
+          labels: gitops, automated

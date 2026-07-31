@@ -27,8 +27,17 @@ module "platform" {
   depends_on = [module.cluster]
 }
 
+# A partir da Fase 7 a aplicação passa a ser implantada pelo Argo CD, não pelo
+# Terraform. Deixar os dois gerenciando o mesmo release seria briga garantida:
+# o Argo reconcilia contra o git a cada 3 minutos, o Terraform contra o state —
+# e cada `apply` desfaria o que o outro fez.
+#
+# A fronteira fica assim: Terraform cuida do cluster e da plataforma; o Argo
+# cuida do que roda em cima. count mantém o caminho antigo disponível para
+# comparar os dois modelos.
 module "app" {
   source = "./modules/app"
+  count  = var.manage_app_with_terraform ? 1 : 0
 
   release_name     = "taskapi"
   chart_path       = "${path.module}/../charts/taskapi"
@@ -36,6 +45,21 @@ module "app" {
   environment      = var.app_environment
   image_repository = var.app_image_repository
   image_tag        = var.app_image_tag
+
+  depends_on = [module.platform]
+}
+
+module "gitops" {
+  source = "./modules/gitops"
+  count  = var.enable_gitops ? 1 : 0
+
+  argocd_version      = var.argocd_version
+  argocd_apps_version = var.argocd_apps_version
+  argocd_host         = var.argocd_host
+  repo_url            = var.repo_url
+  target_revision     = var.target_revision
+  environment         = var.app_environment
+  app_namespace       = module.platform.namespace
 
   depends_on = [module.platform]
 }
