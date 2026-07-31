@@ -1,0 +1,41 @@
+# Backend S3 apontando para um MinIO local.
+#
+# Para ativar: `make tf-backend-up` (sobe o MinIO e cria o bucket), renomeie
+# este arquivo para backend.tf e rode `terraform init -migrate-state`.
+#
+# O que se aprende aqui, e que só o backend remoto ensina:
+#   - o state sai da máquina de quem aplicou e passa a ser compartilhável;
+#   - `use_lockfile` cria um lock no próprio bucket, impedindo dois applies
+#     simultâneos corromperem o state;
+#   - os `skip_*` existem porque o backend S3 do Terraform assume AWS de
+#     verdade — sem eles ele tenta validar credencial e região com a AWS e
+#     falha antes de chegar no MinIO.
+#
+# O problema do ovo e da galinha vale ser notado: quem provisiona o lugar onde
+# o state mora? Aqui, um container fora do Terraform. Em nuvem, normalmente um
+# "bootstrap" separado, com state local, que cria o bucket dos demais.
+
+terraform {
+  backend "s3" {
+    bucket = "taskapi-tfstate"
+    key    = "lab/terraform.tfstate"
+    region = "us-east-1"
+
+    endpoints = {
+      s3 = "http://localhost:9000"
+    }
+
+    access_key = "minioadmin"
+    secret_key = "minioadmin"
+
+    use_path_style              = true
+    skip_credentials_validation = true
+    skip_metadata_api_check     = true
+    skip_region_validation      = true
+    skip_requesting_account_id  = true
+    skip_s3_checksum            = true
+
+    # Locking nativo em S3 (Terraform 1.10+), sem precisar de DynamoDB.
+    use_lockfile = true
+  }
+}

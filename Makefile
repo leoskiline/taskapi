@@ -328,6 +328,87 @@ helm-rollback:
 helm-uninstall:
 	helm uninstall $(RELEASE) -n $(NAMESPACE)
 
+# ---------------------------------------------------------------- terraform --
+
+TF_DIR      ?= terraform
+TF          ?= terraform -chdir=$(TF_DIR)
+MINIO_IMAGE ?= minio/minio:latest
+MC_IMAGE    ?= minio/mc:latest
+
+## tf-init: inicializa o Terraform (baixa providers)
+.PHONY: tf-init
+tf-init:
+	$(TF) init
+
+## tf-fmt: formata os .tf
+.PHONY: tf-fmt
+tf-fmt:
+	terraform fmt -recursive $(TF_DIR)
+
+## tf-validate: valida sintaxe e referências, sem tocar em nada
+.PHONY: tf-validate
+tf-validate:
+	terraform fmt -check -recursive $(TF_DIR)
+	$(TF) validate
+
+## tf-plan: mostra o que mudaria
+.PHONY: tf-plan
+tf-plan:
+	$(TF) plan
+
+## tf-apply: cria/atualiza cluster + plataforma + aplicação
+.PHONY: tf-apply
+tf-apply:
+	$(TF) apply -auto-approve
+
+## tf-destroy: derruba tudo que o Terraform criou
+.PHONY: tf-destroy
+tf-destroy:
+	$(TF) destroy -auto-approve
+
+## tf-output: valores expostos pela raiz
+.PHONY: tf-output
+tf-output:
+	$(TF) output
+
+## tf-state: lista os recursos rastreados
+.PHONY: tf-state
+tf-state:
+	$(TF) state list
+
+# --- backend remoto em MinIO ------------------------------------------------
+
+## tf-backend-up: sobe o MinIO e cria o bucket do state
+.PHONY: tf-backend-up
+tf-backend-up:
+	@docker start minio >/dev/null 2>&1 || \
+	docker run -d --name minio \
+		-p 9000:9000 -p 9001:9001 \
+		-e MINIO_ROOT_USER=minioadmin \
+		-e MINIO_ROOT_PASSWORD=minioadmin \
+		-v minio-data:/data \
+		$(MINIO_IMAGE) server /data --console-address ":9001" >/dev/null
+	@echo "aguardando o MinIO..."
+	@for i in $$(seq 1 30); do \
+		curl -fsS http://localhost:9000/minio/health/live >/dev/null 2>&1 && break; \
+		sleep 1; \
+	done
+	@docker run --rm --network host $(MC_IMAGE) sh -c \
+		"mc alias set local http://localhost:9000 minioadmin minioadmin >/dev/null && \
+		 mc mb --ignore-existing local/taskapi-tfstate"
+	@echo "bucket pronto — console em http://localhost:9001 (minioadmin/minioadmin)"
+
+## tf-backend-down: para o MinIO (o volume com o state permanece)
+.PHONY: tf-backend-down
+tf-backend-down:
+	-docker rm -f minio
+
+## tf-migrate: passa o state local para o MinIO
+.PHONY: tf-migrate
+tf-migrate: tf-backend-up
+	cp $(TF_DIR)/backend-minio.tf.example $(TF_DIR)/backend.tf
+	$(TF) init -migrate-state
+
 # ------------------------------------------------------------------ atalhos --
 
 ## dev: banco + migrations + API, em um comando

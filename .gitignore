@@ -16,3 +16,16 @@ coverage.*
 
 # Dependencias do Helm baixadas: reconstruiveis a partir do Chart.lock
 charts/**/charts/
+
+# Terraform
+.terraform/
+*.tfplan
+# State NUNCA vai para o git: contém valores sensíveis em texto e não tem
+# locking. É exatamente o problema que o backend remoto resolve.
+*.tfstate
+*.tfstate.*
+# backend.tf é gerado por `make tf-migrate` a partir do .example
+terraform/backend.tf
+# .terraform.lock.hcl, ao contrário, DEVE ser commitado: é ele que garante
+# que todo mundo use a mesma versão de provider.
+!**/.terraform.lock.hcl
