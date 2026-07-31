@@ -278,6 +278,20 @@ O `for: 2m` é o que separa alerta de ruído: sem ele, um único 500 durante um 
 
 **Um detalhe que só aparece quando as fases se encontram:** na primeira tentativa o alerta não disparou, porque o `selfHeal` do Argo CD (Fase 7) religou o Postgres em ~10 segundos e desfez a injeção de falha. Foi preciso pausar a reconciliação antes de injetar — que é exatamente o que um plantonista faz antes de mexer em produção.
 
+### Logs
+
+Loki em modo `SingleBinary` (um pod em vez dos ~8 do modo distribuído) com Promtail lendo `/var/log/pods` em cada nó. Loki indexa **labels, não o conteúdo da linha** — é por isso que o log estruturado em JSON da Fase 1 importa: com campos, a consulta filtra por `status >= 500`; sem eles, vira regex.
+
+⚠️ **Pré-requisito de host:** o Promtail falha com `too many open files` se o limite de inotify do kernel for baixo. O padrão do Ubuntu Server (`fs.inotify.max_user_instances = 128`) não basta:
+
+```bash
+echo 'fs.inotify.max_user_instances=512' | sudo tee /etc/sysctl.d/99-inotify.conf
+sudo sysctl --system
+kubectl -n monitoring rollout restart daemonset promtail
+```
+
+Vale para qualquer coletor de log em DaemonSet, não só o Promtail — cada arquivo observado consome uma instância de inotify.
+
 ## Decisões que importam para as próximas fases
 
 **Sem framework web.** Roteamento com o `net/http` do Go 1.22+ (`mux.HandleFunc("GET /tasks/{id}", ...)`). Menos dependência para atualizar e menos superfície para o Trivy reclamar na Fase 9.
