@@ -13,7 +13,7 @@ replicaCount: 1
 image:
   repository: ghcr.io/leoskiline/taskapi
   # ATUALIZADO PELO CI — o job de deploy abre PR trocando esta linha.
-  tag: c52503b
+  tag: metrics-dev
 
 config:
   logLevel: debug
