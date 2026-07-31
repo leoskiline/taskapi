@@ -4,7 +4,7 @@ API REST de tarefas em Go, usada como cobaia do laboratório DevOps descrito em 
 
 A aplicação é deliberadamente pequena. A complexidade deste repositório deve crescer na **esteira** (build, deploy, observabilidade, segurança), não nas regras de negócio.
 
-**Fase atual: 3 — CI.** Kubernetes, IaC e observabilidade chegam nas fases seguintes.
+**Fase atual: 5 — Helm.** IaC, GitOps e observabilidade chegam nas fases seguintes.
 
 ---
 
@@ -152,6 +152,30 @@ git push -u origin main
 
 Depois, em **Settings → Branches → Add rule** na `main`: exigir PR antes do merge e exigir os checks `lint`, `test` e `smoke` verdes. Sem isso o pipeline roda mas não impede nada — e o critério de conclusão da fase é justamente ver um PR com teste quebrado ser **bloqueado**.
 
+## Kubernetes
+
+Os manifestos crus continuam em `k8s/` como referência do que foi escrito à mão na Fase 4. O caminho recomendado hoje é o chart.
+
+```bash
+make cluster-up            # kind com 3 nós + ingress-nginx
+make helm-install ENV=dev  # instala/atualiza o release
+make helm-test             # exercita /readyz, cria uma tarefa e lê de volta
+make helm-status           # revisão atual + histórico
+make helm-rollback         # volta uma revisão
+```
+
+O chart vive em `charts/taskapi/`, com `values-dev.yaml` (1 réplica, log debug, Postgres como subchart) e `values-prod.yaml` (3 réplicas, log warn, **banco externo** — `postgresql.enabled: false`).
+
+Detalhes que valem entender:
+
+- **`version` ≠ `appVersion`.** A primeira é do empacotamento, a segunda é da imagem. Corrigir um template não deveria fingir que a aplicação mudou.
+- **`checksum/config` na anotação do pod.** Sem isso, mudar só um valor de ConfigMap não reinicia nada — o Deployment fica idêntico e o Helm não tem o que atualizar. Verificado: um upgrade que muda apenas `logLevel` recria o pod.
+- **`taskapi.databaseURL` é um helper.** A URL do banco existe em um lugar só; o initContainer da migration e o container da aplicação não têm como divergir.
+- **`--atomic` desfaz sozinho.** Um upgrade para uma tag inexistente falhou e voltou para a revisão anterior sem intervenção; a API nunca saiu do ar.
+- **Sem `--atomic`, o Helm diz "deployed" mesmo com o pod em `ErrImagePull`.** "Deployed" significa "manifestos aplicados", não "aplicação saudável". É a diferença entre `helm upgrade` e `helm upgrade --atomic --wait`.
+- **As migrations moram dentro do chart** (`charts/taskapi/migrations/`) porque o `.Files.Glob` não lê fora do diretório do chart. Compose, testes de integração e Makefile apontam todos para lá — uma fonte só.
+- **O chart do Postgres precisou de override de imagem.** A Bitnami retirou `docker.io/bitnami/*` em 2025; sem apontar para `bitnamilegacy` o banco fica em `ImagePullBackOff` ([ADR 0005](docs/decisions/0005-postgres-como-dependencia-e-imagem-legacy.md)).
+
 ## Decisões que importam para as próximas fases
 
 **Sem framework web.** Roteamento com o `net/http` do Go 1.22+ (`mux.HandleFunc("GET /tasks/{id}", ...)`). Menos dependência para atualizar e menos superfície para o Trivy reclamar na Fase 9.
@@ -192,4 +216,4 @@ docker-compose.yml  banco + migrations + API, com ordem garantida por health
 
 ## Próxima fase
 
-**Fase 4 — Kubernetes:** cluster kind com 3 nós e os manifestos escritos à mão (Deployment, Service, ConfigMap, Secret, Ingress, StatefulSet do Postgres) antes de conhecer Helm.
+**Fase 6 — Terraform:** criar o cluster e instalar os add-ons declarativamente, com módulos e state remoto em MinIO.
