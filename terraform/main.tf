@@ -49,6 +49,18 @@ module "app" {
   depends_on = [module.platform]
 }
 
+module "observability" {
+  source = "./modules/observability"
+  count  = var.enable_observability ? 1 : 0
+
+  stack_version    = var.kube_prometheus_stack_version
+  grafana_host     = var.grafana_host
+  grafana_password = var.grafana_password
+  retention        = var.metrics_retention
+
+  depends_on = [module.platform]
+}
+
 module "gitops" {
   source = "./modules/gitops"
   count  = var.enable_gitops ? 1 : 0

@@ -1,0 +1,189 @@
+{
+  "title": "taskapi — quatro sinais de ouro",
+  "uid": "taskapi-golden",
+  "tags": ["taskapi", "slo"],
+  "timezone": "browser",
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "30s",
+  "time": { "from": "now-1h", "to": "now" },
+  "panels": [
+    {
+      "type": "row",
+      "title": "SLO",
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 0 }
+    },
+    {
+      "type": "stat",
+      "title": "Requests dentro de 300ms (alvo: 99%)",
+      "description": "Proporção de requests abaixo do bucket de 300ms. Vem da recording rule taskapi:latency_slo_ratio — a mesma expressão que o alerta usa, para painel e alerta nunca discordarem.",
+      "gridPos": { "h": 5, "w": 8, "x": 0, "y": 1 },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "min": 0,
+          "max": 1,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "red", "value": null },
+              { "color": "orange", "value": 0.95 },
+              { "color": "green", "value": 0.99 }
+            ]
+          }
+        }
+      },
+      "targets": [{ "expr": "taskapi:latency_slo_ratio", "legendFormat": "dentro do SLO", "refId": "A" }]
+    },
+    {
+      "type": "stat",
+      "title": "Taxa de erro (alerta: >5%)",
+      "gridPos": { "h": 5, "w": 8, "x": 8, "y": 1 },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "orange", "value": 0.01 },
+              { "color": "red", "value": 0.05 }
+            ]
+          }
+        }
+      },
+      "targets": [{ "expr": "taskapi:error_rate", "legendFormat": "5xx", "refId": "A" }]
+    },
+    {
+      "type": "stat",
+      "title": "Error budget restante (30d, 99%)",
+      "description": "Com um SLO de 99%, sobra 1% de orçamento de erro. Este painel mostra quanto dele ainda não foi gasto. Chegar a zero é o sinal de parar de lançar e estabilizar.",
+      "gridPos": { "h": 5, "w": 8, "x": 16, "y": 1 },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "red", "value": null },
+              { "color": "orange", "value": 0.25 },
+              { "color": "green", "value": 0.5 }
+            ]
+          }
+        }
+      },
+      "targets": [
+        {
+          "expr": "clamp_min(1 - (sum(increase(http_requests_total{status=~\"5..\"}[30d])) / clamp_min(sum(increase(http_requests_total[30d])), 1)) / 0.01, 0)",
+          "legendFormat": "budget",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "type": "row",
+      "title": "Latência",
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 6 }
+    },
+    {
+      "type": "timeseries",
+      "title": "Latência por percentil",
+      "description": "p50, p95 e p99. A média esconde o que importa: se metade dos usuários é atendida em 5ms e a outra metade em 2s, a média parece ótima e a experiência é péssima.",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 7 },
+      "fieldConfig": { "defaults": { "unit": "s" } },
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.50, sum(rate(http_request_duration_seconds_bucket[5m])) by (le))",
+          "legendFormat": "p50",
+          "refId": "A"
+        },
+        {
+          "expr": "histogram_quantile(0.95, sum(rate(http_request_duration_seconds_bucket[5m])) by (le))",
+          "legendFormat": "p95",
+          "refId": "B"
+        },
+        {
+          "expr": "histogram_quantile(0.99, sum(rate(http_request_duration_seconds_bucket[5m])) by (le))",
+          "legendFormat": "p99",
+          "refId": "C"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Latência p95 por rota",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 7 },
+      "fieldConfig": { "defaults": { "unit": "s" } },
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.95, sum(rate(http_request_duration_seconds_bucket[5m])) by (le, route))",
+          "legendFormat": "{{route}}",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "type": "row",
+      "title": "Tráfego e erros",
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 15 }
+    },
+    {
+      "type": "timeseries",
+      "title": "Requests por segundo, por rota",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 16 },
+      "fieldConfig": { "defaults": { "unit": "reqps" } },
+      "targets": [
+        {
+          "expr": "sum(rate(http_requests_total[5m])) by (route)",
+          "legendFormat": "{{route}}",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Requests por status",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 16 },
+      "fieldConfig": { "defaults": { "unit": "reqps" } },
+      "targets": [
+        {
+          "expr": "sum(rate(http_requests_total[5m])) by (status)",
+          "legendFormat": "{{status}}",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "type": "row",
+      "title": "Saturação",
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 24 }
+    },
+    {
+      "type": "timeseries",
+      "title": "Requests simultâneos",
+      "gridPos": { "h": 8, "w": 8, "x": 0, "y": 25 },
+      "targets": [
+        { "expr": "sum(http_requests_in_flight)", "legendFormat": "em voo", "refId": "A" }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Pool de conexões do Postgres",
+      "description": "Pool esgotado aparece como latência alta com CPU baixa: os requests esperam por conexão, não por processamento.",
+      "gridPos": { "h": 8, "w": 8, "x": 8, "y": 25 },
+      "targets": [
+        { "expr": "sum(db_pool_connections) by (state)", "legendFormat": "{{state}}", "refId": "A" },
+        { "expr": "sum(db_pool_max_connections)", "legendFormat": "máximo", "refId": "B" }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Memória e goroutines",
+      "gridPos": { "h": 8, "w": 8, "x": 16, "y": 25 },
+      "targets": [
+        { "expr": "sum(go_memstats_heap_inuse_bytes{job=~\".*taskapi.*\"})", "legendFormat": "heap em uso", "refId": "A" },
+        { "expr": "sum(go_goroutines{job=~\".*taskapi.*\"})", "legendFormat": "goroutines", "refId": "B" }
+      ]
+    }
+  ]
+}

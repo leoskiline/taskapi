@@ -30,3 +30,12 @@ output "argocd_url" {
 output "argocd_admin_password_command" {
   value = try(module.gitops[0].admin_password_command, "gitops desligado")
 }
+
+output "grafana_url" {
+  value = try("${module.observability[0].grafana_url}:${var.ingress_host_port}", "observabilidade desligada")
+}
+
+output "prometheus_port_forward" {
+  description = "Prometheus não tem Ingress: acesso por port-forward, de propósito"
+  value       = "kubectl -n monitoring port-forward svc/kube-prometheus-stack-prometheus 9090:9090"
+}

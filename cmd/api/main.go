@@ -15,9 +15,11 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 
 	"github.com/leoskiline/taskapi/internal/config"
 	"github.com/leoskiline/taskapi/internal/httpx"
+	"github.com/leoskiline/taskapi/internal/metrics"
 	"github.com/leoskiline/taskapi/internal/task"
 )
 
@@ -92,14 +94,24 @@ func run() error {
 
 	store := task.NewPostgresStore(pool)
 
+	m := metrics.New()
+	m.RegisterDBPool(pool)
+
 	mux := http.NewServeMux()
 	task.NewHandler(store, logger).Register(mux)
 	mux.HandleFunc("GET /healthz", healthz)
 	mux.HandleFunc("GET /readyz", readyz(store))
 
+	// /metrics serve o registry da aplicação, não o global do pacote.
+	mux.Handle("GET /metrics", promhttp.HandlerFor(m.Registry, promhttp.HandlerOpts{
+		ErrorHandling: promhttp.ContinueOnError,
+	}))
+
 	srv := &http.Server{
-		Addr:              ":" + cfg.Port,
-		Handler:           httpx.RequestLogger(logger)(mux),
+		Addr: ":" + cfg.Port,
+		// A ordem importa: o logger envolve o instrumentador, então a duração
+		// medida pela métrica não inclui o tempo de serializar a linha de log.
+		Handler: httpx.RequestLogger(logger)(httpx.Instrument(m)(mux)),
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       15 * time.Second,
 		WriteTimeout:      15 * time.Second,

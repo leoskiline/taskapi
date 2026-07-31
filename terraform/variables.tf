@@ -99,6 +99,37 @@ variable "target_revision" {
   default     = "main"
 }
 
+variable "enable_observability" {
+  description = "Instala kube-prometheus-stack (Prometheus, Alertmanager, Grafana)"
+  type        = bool
+  default     = true
+}
+
+variable "kube_prometheus_stack_version" {
+  description = "Versão do chart kube-prometheus-stack"
+  type        = string
+  default     = "88.0.1"
+}
+
+variable "grafana_host" {
+  description = "Hostname do Ingress do Grafana"
+  type        = string
+  default     = "grafana.localtest.me"
+}
+
+variable "grafana_password" {
+  description = "Senha do admin do Grafana. Laboratório: em produção viria de Secret externo (Fase 9)."
+  type        = string
+  default     = "admin"
+  sensitive   = true
+}
+
+variable "metrics_retention" {
+  description = "Por quanto tempo o Prometheus guarda as séries"
+  type        = string
+  default     = "24h"
+}
+
 variable "app_environment" {
   description = "Qual values-<env>.yaml do chart usar"
   type        = string

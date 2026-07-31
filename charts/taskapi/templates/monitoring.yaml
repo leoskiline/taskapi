@@ -1,0 +1,123 @@
+{{- if .Values.metrics.serviceMonitor.enabled }}
+# O ServiceMonitor é como o Prometheus Operator descobre alvos: em vez de uma
+# lista estática de endereços, ele observa este recurso e monta a configuração
+# de scrape sozinho. Pod novo entra no alvo sem ninguém editar nada.
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: {{ include "taskapi.fullname" . }}
+  labels:
+    {{- include "taskapi.labels" . | nindent 4 }}
+    {{- with .Values.metrics.serviceMonitor.labels }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+spec:
+  selector:
+    matchLabels:
+      {{- include "taskapi.selectorLabels" . | nindent 6 }}
+  endpoints:
+    - port: http
+      path: /metrics
+      interval: {{ .Values.metrics.serviceMonitor.interval }}
+      scrapeTimeout: {{ .Values.metrics.serviceMonitor.scrapeTimeout }}
+{{- end }}
+
+{{- if .Values.metrics.rules.enabled }}
+---
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: {{ include "taskapi.fullname" . }}
+  labels:
+    {{- include "taskapi.labels" . | nindent 4 }}
+    {{- with .Values.metrics.rules.labels }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+spec:
+  groups:
+    # ---------------------------------------------------------------------
+    # Recording rules: pré-calculam expressões caras.
+    #
+    # Um dashboard que roda a mesma divisão de rates em cada painel, a cada
+    # refresh, faz o Prometheus recalcular tudo toda vez. Gravar o resultado
+    # uma vez por intervalo é mais barato e deixa alerta e painel usando
+    # exatamente a MESMA definição — evitando o clássico "o alerta disparou
+    # mas o gráfico está verde".
+    # ---------------------------------------------------------------------
+    - name: taskapi.slo
+      interval: 30s
+      rules:
+        - record: taskapi:request_rate
+          expr: sum(rate(http_requests_total[5m]))
+
+        - record: taskapi:error_rate
+          expr: |
+            sum(rate(http_requests_total{status=~"5.."}[5m]))
+            /
+            clamp_min(sum(rate(http_requests_total[5m])), 0.001)
+
+        # Proporção de requests dentro do alvo de latência do SLO.
+        # O bucket de {{ .Values.metrics.slo.latencyBucket }}s existe no
+        # histograma justamente para esta conta ser possível.
+        - record: taskapi:latency_slo_ratio
+          expr: |
+            sum(rate(http_request_duration_seconds_bucket{le="{{ .Values.metrics.slo.latencyBucket }}"}[5m]))
+            /
+            clamp_min(sum(rate(http_request_duration_seconds_count[5m])), 0.001)
+
+    - name: taskapi.alertas
+      rules:
+        # O alerta que a fase exige: taxa de erro acima do limite por 2 min.
+        #
+        # `for: 2m` é o que separa alerta de ruído. Sem ele, um único 500
+        # durante um rollout acordaria alguém às 3h da manhã.
+        - alert: TaskapiTaxaDeErroAlta
+          expr: taskapi:error_rate > {{ .Values.metrics.slo.errorRateThreshold }}
+          for: 2m
+          labels:
+            severity: critical
+            service: taskapi
+          annotations:
+            summary: "taskapi com taxa de erro de {{`{{ $value | humanizePercentage }}`}}"
+            description: >-
+              Mais de {{ .Values.metrics.slo.errorRateThreshold | float64 | mulf 100 }}% dos requests
+              estão retornando 5xx há 2 minutos.
+              Comece por: kubectl get pods -n {{ .Release.Namespace }} e o painel de readiness.
+
+        - alert: TaskapiLatenciaAcimaDoSLO
+          expr: taskapi:latency_slo_ratio < {{ .Values.metrics.slo.latencyTarget }}
+          for: 5m
+          labels:
+            severity: warning
+            service: taskapi
+          annotations:
+            summary: "taskapi fora do SLO de latência"
+            description: >-
+              Menos de {{ .Values.metrics.slo.latencyTarget | float64 | mulf 100 }}% dos requests
+              estão abaixo de {{ .Values.metrics.slo.latencyBucket }}s.
+
+        # Sem tráfego nenhum a aplicação parece saudável — não há erro porque
+        # não há request. Este alerta pega o caso em que o Ingress ou o
+        # Service pararam de entregar tráfego.
+        - alert: TaskapiSemTrafego
+          expr: taskapi:request_rate == 0
+          for: 10m
+          labels:
+            severity: warning
+            service: taskapi
+          annotations:
+            summary: "taskapi sem tráfego há 10 minutos"
+            description: "Nenhum request chegou. Verifique Ingress, Service e Endpoints."
+
+        - alert: TaskapiPoolDeConexoesEsgotado
+          expr: db_pool_connections{state="acquired"} >= db_pool_max_connections
+          for: 3m
+          labels:
+            severity: warning
+            service: taskapi
+          annotations:
+            summary: "pool de conexões do Postgres esgotado"
+            description: >-
+              Todas as conexões estão em uso. Sintoma típico: latência alta com
+              CPU baixa, porque os requests esperam por conexão.
+{{- end }}

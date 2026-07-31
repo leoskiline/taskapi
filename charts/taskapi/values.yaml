@@ -32,6 +32,35 @@ resources:
   limits:
     memory: 128Mi
 
+# ---------------------------------------------------------------------------
+# Observabilidade
+# ---------------------------------------------------------------------------
+metrics:
+  serviceMonitor:
+    # Requer o CRD do Prometheus Operator no cluster. Desligado, o chart
+    # continua instalável em um cluster sem monitoramento.
+    enabled: true
+    interval: 15s
+    scrapeTimeout: 10s
+    # O kube-prometheus-stack só considera ServiceMonitors com este label,
+    # a menos que se configure o contrário. Errar isto é o motivo número um
+    # de "criei o ServiceMonitor e o alvo não aparece no Prometheus".
+    labels:
+      release: kube-prometheus-stack
+
+  rules:
+    enabled: true
+    labels:
+      release: kube-prometheus-stack
+
+  # O SLO em um lugar só: alerta e dashboard leem daqui.
+  slo:
+    # 99% dos requests abaixo de 300ms.
+    latencyBucket: "0.3"
+    latencyTarget: 0.99
+    # Alerta quando mais de 5% dos requests forem 5xx.
+    errorRateThreshold: 0.05
+
 migrations:
   enabled: true
   image: migrate/migrate:v4.19.1

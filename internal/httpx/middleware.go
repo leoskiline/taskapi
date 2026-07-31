@@ -4,7 +4,10 @@ package httpx
 import (
 	"log/slog"
 	"net/http"
+	"strconv"
 	"time"
+
+	"github.com/leoskiline/taskapi/internal/metrics"
 )
 
 // statusRecorder guarda o status escrito, porque http.ResponseWriter não
@@ -46,6 +49,44 @@ func RequestLogger(logger *slog.Logger) func(http.Handler) http.Handler {
 			)
 		})
 	}
+}
+
+// Instrument alimenta as métricas Prometheus a cada request.
+//
+// Separado do RequestLogger de propósito: log e métrica respondem perguntas
+// diferentes. Métrica responde "quantos e quão rápido" de forma barata e
+// agregada; log responde "o que houve neste request específico". Misturar os
+// dois em um middleware só faria cada mudança em um mexer no outro.
+func Instrument(m *metrics.Metrics) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			m.RequestsInFlight.Inc()
+			defer m.RequestsInFlight.Dec()
+
+			start := time.Now()
+			rec := &statusRecorder{ResponseWriter: w, status: http.StatusOK}
+
+			next.ServeHTTP(rec, r)
+
+			route := routeOf(r)
+			m.RequestsTotal.WithLabelValues(r.Method, route, strconv.Itoa(rec.status)).Inc()
+			m.RequestDuration.WithLabelValues(r.Method, route).Observe(time.Since(start).Seconds())
+		})
+	}
+}
+
+// routeOf devolve o padrão da rota que casou (ex.: "GET /tasks/{id}"), não o
+// caminho concreto. É o que mantém a cardinalidade das métricas sob controle.
+//
+// r.Pattern é preenchido pelo ServeMux desde o Go 1.23. Quando vazio — request
+// que não casou com rota nenhuma —, usa-se um valor fixo, em vez do caminho
+// pedido: senão um scanner varrendo URLs aleatórias criaria uma série nova a
+// cada 404.
+func routeOf(r *http.Request) string {
+	if r.Pattern != "" {
+		return r.Pattern
+	}
+	return "desconhecida"
 }
 
 func levelFor(status int) slog.Level {
