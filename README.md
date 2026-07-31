@@ -4,7 +4,7 @@ API REST de tarefas em Go, usada como cobaia do laboratório DevOps descrito em 
 
 A aplicação é deliberadamente pequena. A complexidade deste repositório deve crescer na **esteira** (build, deploy, observabilidade, segurança), não nas regras de negócio.
 
-**Fase atual: 5 — Helm.** IaC, GitOps e observabilidade chegam nas fases seguintes.
+**Fase atual: 6 — Terraform.** GitOps, observabilidade e DevSecOps chegam nas fases seguintes.
 
 ---
 
@@ -176,6 +176,37 @@ Detalhes que valem entender:
 - **As migrations moram dentro do chart** (`charts/taskapi/migrations/`) porque o `.Files.Glob` não lê fora do diretório do chart. Compose, testes de integração e Makefile apontam todos para lá — uma fonte só.
 - **O chart do Postgres precisou de override de imagem.** A Bitnami retirou `docker.io/bitnami/*` em 2025; sem apontar para `bitnamilegacy` o banco fica em `ImagePullBackOff` ([ADR 0005](docs/decisions/0005-postgres-como-dependencia-e-imagem-legacy.md)).
 
+## Infraestrutura como código
+
+Todo o ambiente — cluster, ingress-nginx e a aplicação — é criado por Terraform:
+
+```bash
+make tf-init
+make tf-apply      # cluster + plataforma + app
+make tf-output
+make tf-destroy
+```
+
+**Reconstrução completa medida: 1m42s** entre `destroy` e `apply`, sem nenhum passo manual.
+
+Três módulos com responsabilidades separadas: `modules/cluster` (o kind), `modules/platform` (ingress-nginx e o namespace — o que o cluster precisa ter antes de qualquer app) e `modules/app` (o release do chart). A separação é o que permite `-target=module.app` numa emergência sem arriscar o cluster, e é o desenho que a Fase 10 reaproveita trocando só o módulo de cluster por um de EKS/AKS/GKE.
+
+### State remoto sem gastar com nuvem
+
+```bash
+make tf-backend-up   # MinIO + bucket
+make tf-migrate      # init -migrate-state -force-copy
+```
+
+Backend S3 apontando para um MinIO em container, com `use_lockfile` para impedir dois `apply` simultâneos. Console em `http://localhost:9001`.
+
+### O que estas armadilhas ensinaram
+
+- **Provider não pode depender de recurso criado no mesmo apply.** Providers são configurados na fase de *plan*; num ambiente do zero o contexto do kubeconfig ainda não existe e o plan falha. Por isso `make tf-apply` roda em dois estágios e os providers apontam para um caminho de kubeconfig, não para atributos do cluster ([ADR 0006](docs/decisions/0006-terraform-provider-depende-de-recurso.md)).
+- **`set` do provider Helm faz inferência de tipo.** `"true"` virou booleano e o apply morreu com `cannot unmarshal bool into ... nodeSelector of type string`. Em YAML (`yamlencode`) o tipo é explícito.
+- **`yes | terraform init -migrate-state` destrói o rastreamento.** O comando `yes` imprime `y`, e o Terraform aceita exclusivamente a palavra `yes` — qualquer outra resposta significa "não copie o state". O resultado foi backend remoto vazio, state local zerado e um `plan` querendo recriar tudo. Salvou o `terraform.tfstate.backup` + `terraform state push`. O certo é `-force-copy`.
+- **Terraform não vê drift dentro de um release do Helm.** Verificado: `kubectl label namespace` → `plan` acusa e `apply` corrige; `kubectl scale deployment` dentro do release → **`No changes`**. `helm_release` rastreia o release (chart + values), não os objetos gerados. Reconciliação objeto a objeto é trabalho do Argo CD, na Fase 7 — é literalmente a razão de ele existir.
+
 ## Decisões que importam para as próximas fases
 
 **Sem framework web.** Roteamento com o `net/http` do Go 1.22+ (`mux.HandleFunc("GET /tasks/{id}", ...)`). Menos dependência para atualizar e menos superfície para o Trivy reclamar na Fase 9.
@@ -216,4 +247,4 @@ docker-compose.yml  banco + migrations + API, com ordem garantida por health
 
 ## Próxima fase
 
-**Fase 6 — Terraform:** criar o cluster e instalar os add-ons declarativamente, com módulos e state remoto em MinIO.
+**Fase 7 — GitOps:** Argo CD reconciliando o cluster contra o git, com repositório de manifestos separado e o CI abrindo PR para promover a imagem.
