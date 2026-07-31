@@ -50,7 +50,9 @@ func newTestPool(t *testing.T) *pgxpool.Pool {
 func aplicarMigrations(t *testing.T, pool *pgxpool.Pool) {
 	t.Helper()
 
-	sql, err := os.ReadFile(filepath.Join("..", "..", "migrations", "000001_create_tasks.up.sql"))
+	// As migrations vivem dentro do chart: o .Files.Glob do Helm não lê fora do
+	// diretório do chart, e duplicar SQL seria pior que este caminho comprido.
+	sql, err := os.ReadFile(filepath.Join("..", "..", "charts", "taskapi", "migrations", "000001_create_tasks.up.sql"))
 	if err != nil {
 		t.Fatalf("ler migration: %v", err)
 	}

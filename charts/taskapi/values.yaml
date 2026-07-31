@@ -1,0 +1,113 @@
+# Valores padrão. Cada ambiente sobrescreve só o que muda, via -f values-<env>.yaml.
+
+replicaCount: 2
+
+image:
+  repository: ghcr.io/leoskiline/taskapi
+  pullPolicy: IfNotPresent
+  # Vazio = usa .Chart.appVersion. Manter assim evita ter a versão em dois
+  # lugares; o CI sobrescreve com --set image.tag=<sha> no deploy.
+  tag: ""
+
+# Configuração da aplicação — vira ConfigMap.
+config:
+  logLevel: info
+  port: "8080"
+  shutdownTimeout: 10s
+
+service:
+  type: ClusterIP
+  port: 80
+
+ingress:
+  enabled: true
+  className: nginx
+  host: taskapi.localtest.me
+  annotations: {}
+
+resources:
+  requests:
+    cpu: 50m
+    memory: 32Mi
+  limits:
+    memory: 128Mi
+
+migrations:
+  enabled: true
+  image: migrate/migrate:v4.19.1
+  resources:
+    requests:
+      cpu: 20m
+      memory: 32Mi
+    limits:
+      memory: 64Mi
+
+# As três sondas, com os papéis que o ADR 0001 definiu.
+probes:
+  startup:
+    path: /healthz
+    periodSeconds: 2
+    failureThreshold: 15
+  readiness:
+    path: /readyz
+    periodSeconds: 5
+    timeoutSeconds: 3
+    failureThreshold: 2
+  liveness:
+    path: /healthz
+    periodSeconds: 10
+    timeoutSeconds: 3
+    failureThreshold: 3
+
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 65532
+  seccompProfile:
+    type: RuntimeDefault
+
+securityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  capabilities:
+    drop: ["ALL"]
+
+topologySpread:
+  enabled: true
+
+# ---------------------------------------------------------------------------
+# Banco de dados
+# ---------------------------------------------------------------------------
+# Credenciais em texto no values: aceitável para laboratório, inaceitável em
+# produção. A Fase 9 troca isto por External Secrets ou SOPS.
+postgresql:
+  enabled: true
+
+  auth:
+    username: taskapi
+    password: taskapi
+    database: taskapi
+    postgresPassword: taskapi
+
+  image:
+    # ATENÇÃO — não é capricho: em 2025 a Bitnami tirou as imagens gratuitas
+    # de `docker.io/bitnami/*` e moveu para `bitnamilegacy`. O chart 16.7.27
+    # ainda aponta para o caminho antigo, que hoje devolve "not found".
+    # Sem este override o Postgres fica em ImagePullBackOff. Ver ADR 0005.
+    registry: docker.io
+    repository: bitnamilegacy/postgresql
+    tag: 17.6.0-debian-12-r4
+
+  primary:
+    persistence:
+      enabled: true
+      size: 1Gi
+    resources:
+      requests:
+        cpu: 50m
+        memory: 128Mi
+      limits:
+        memory: 512Mi
+
+# Usado apenas quando postgresql.enabled = false.
+externalDatabase:
+  url: ""

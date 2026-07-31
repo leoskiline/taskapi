@@ -1,0 +1,27 @@
+# Ambiente de desenvolvimento: barato e verboso.
+replicaCount: 1
+
+config:
+  logLevel: debug
+
+resources:
+  requests:
+    cpu: 20m
+    memory: 32Mi
+  limits:
+    memory: 128Mi
+
+# Uma réplica só não tem o que espalhar.
+topologySpread:
+  enabled: false
+
+postgresql:
+  primary:
+    persistence:
+      size: 1Gi
+    resources:
+      requests:
+        cpu: 20m
+        memory: 128Mi
+      limits:
+        memory: 256Mi

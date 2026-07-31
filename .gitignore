@@ -13,3 +13,6 @@ coverage.*
 .idea/
 .vscode/
 .DS_Store
+
+# Dependencias do Helm baixadas: reconstruiveis a partir do Chart.lock
+charts/**/charts/

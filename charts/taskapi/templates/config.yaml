@@ -1,0 +1,39 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "taskapi.fullname" . }}-config
+  labels:
+    {{- include "taskapi.labels" . | nindent 4 }}
+data:
+  PORT: {{ .Values.config.port | quote }}
+  LOG_LEVEL: {{ .Values.config.logLevel | quote }}
+  SHUTDOWN_TIMEOUT: {{ .Values.config.shutdownTimeout | quote }}
+
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: {{ include "taskapi.fullname" . }}-secret
+  labels:
+    {{- include "taskapi.labels" . | nindent 4 }}
+type: Opaque
+stringData:
+  DATABASE_URL: {{ include "taskapi.databaseURL" . | quote }}
+
+{{- if .Values.migrations.enabled }}
+---
+# ConfigMap das migrations montado no initContainer.
+#
+# .Files.Glob só enxerga arquivos DENTRO do diretório do chart — é por isso que
+# migrations/ mora aqui e não na raiz do repositório. O docker-compose, os
+# testes de integração e o Makefile apontam para este mesmo diretório, de modo
+# que continua havendo uma única fonte da verdade.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "taskapi.fullname" . }}-migrations
+  labels:
+    {{- include "taskapi.labels" . | nindent 4 }}
+data:
+  {{- (.Files.Glob "migrations/*.sql").AsConfig | nindent 2 }}
+{{- end }}

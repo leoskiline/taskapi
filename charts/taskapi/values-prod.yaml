@@ -1,0 +1,28 @@
+# Ambiente de "produção" do laboratório. O valor didático está no que muda:
+# mais réplicas, log mais quieto, folga de recursos — e, sobretudo, o banco
+# deixando de ser um subchart.
+replicaCount: 3
+
+config:
+  logLevel: warn
+
+resources:
+  requests:
+    cpu: 100m
+    memory: 64Mi
+  limits:
+    memory: 256Mi
+
+topologySpread:
+  enabled: true
+
+# Banco gerenciado fora do cluster. Rodar Postgres dentro do Kubernetes é
+# possível, mas a decisão de operar backup, failover e upgrade de banco em
+# produção não deveria vir de graça junto com um `helm install`.
+postgresql:
+  enabled: false
+
+externalDatabase:
+  # Placeholder: em uso real este valor viria de External Secrets (Fase 9),
+  # nunca de um arquivo commitado.
+  url: "postgres://taskapi:TROCAR@postgres.interno:5432/taskapi?sslmode=require"

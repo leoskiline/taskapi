@@ -32,7 +32,10 @@ services:
       db:
         condition: service_healthy
     volumes:
-      - ./migrations:/migrations:ro
+      # As migrations moram dentro do chart porque o .Files.Glob do Helm não
+      # enxerga fora do diretório dele (Fase 5). Continua havendo uma fonte só:
+      # Compose, testes de integração e Helm apontam todos para cá.
+      - ./charts/taskapi/migrations:/migrations:ro
     command:
       - "-path=/migrations"
       - "-database=postgres://${DB_USER:-taskapi}:${DB_PASSWORD:-taskapi}@db:5432/${DB_NAME:-taskapi}?sslmode=disable"

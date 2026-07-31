@@ -1,0 +1,22 @@
+taskapi {{ .Chart.AppVersion }} instalado como release "{{ .Release.Name }}" no namespace {{ .Release.Namespace }}.
+
+Imagem: {{ .Values.image.repository }}:{{ include "taskapi.imageTag" . }}
+Réplicas: {{ .Values.replicaCount }}
+Banco: {{ if .Values.postgresql.enabled }}subchart postgresql ({{ .Release.Name }}-postgresql){{ else }}externo{{ end }}
+
+Acompanhe o rollout:
+  kubectl rollout status deployment/{{ include "taskapi.fullname" . }} -n {{ .Release.Namespace }}
+
+{{ if .Values.ingress.enabled -}}
+Acesse:
+  curl http://{{ .Values.ingress.host }}:8081/healthz
+{{- else -}}
+Sem Ingress. Para acessar:
+  kubectl port-forward -n {{ .Release.Namespace }} svc/{{ include "taskapi.fullname" . }} 8080:{{ .Values.service.port }}
+{{- end }}
+
+Valide a instalação:
+  helm test {{ .Release.Name }} -n {{ .Release.Namespace }}
+
+Se algo der errado:
+  helm rollback {{ .Release.Name }} -n {{ .Release.Namespace }}

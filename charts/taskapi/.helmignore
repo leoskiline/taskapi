@@ -1,0 +1,10 @@
+.DS_Store
+.git/
+.gitignore
+*.tmp
+*.orig
+*.swp
+# values de ambiente não vão dentro do pacote: eles são entrada do deploy,
+# não conteúdo do chart.
+values-dev.yaml
+values-prod.yaml

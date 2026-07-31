@@ -1,0 +1,22 @@
+apiVersion: v2
+name: taskapi
+description: API de tarefas em Go — cobaia do laboratório DevOps
+type: application
+
+# version    = versão do CHART (muda quando o empacotamento muda)
+# appVersion = versão da APLICAÇÃO (a tag da imagem)
+# Separar as duas permite corrigir um template sem fingir que a aplicação mudou.
+version: 0.1.0
+appVersion: "c52503b"
+
+keywords: [go, api, laboratorio]
+home: https://github.com/leoskiline/taskapi
+
+dependencies:
+  # O Postgres deixa de ser um StatefulSet mantido por nós e passa a ser
+  # dependência declarada. A `condition` permite desligá-lo com uma linha em
+  # values e apontar para um banco externo — que é o caso de produção.
+  - name: postgresql
+    version: 16.7.27
+    repository: oci://registry-1.docker.io/bitnamicharts
+    condition: postgresql.enabled

@@ -28,6 +28,11 @@ DATABASE_URL_DOCKER := postgres://$(DB_USER):$(DB_PASSWORD)@$(DB_CONTAINER):5432
 MIGRATE_IMAGE ?= migrate/migrate:v4.19.1
 LINT_IMAGE    ?= golangci/golangci-lint:v2.12.2
 
+# As migrations moram dentro do chart desde a Fase 5: o .Files.Glob do Helm não
+# lê fora do diretório do chart. Compose, testes e Helm apontam todos para cá,
+# então continua havendo uma única fonte da verdade.
+MIGRATIONS_DIR ?= charts/taskapi/migrations
+
 .DEFAULT_GOAL := help
 
 ## help: lista os alvos disponíveis
@@ -121,19 +126,19 @@ psql:
 ## migrate-up: aplica as migrations pendentes
 .PHONY: migrate-up
 migrate-up:
-	docker run --rm --network $(DB_NETWORK) -v "$(PWD)/migrations":/migrations $(MIGRATE_IMAGE) \
+	docker run --rm --network $(DB_NETWORK) -v "$(PWD)/$(MIGRATIONS_DIR)":/migrations $(MIGRATE_IMAGE) \
 		-path=/migrations -database "$(DATABASE_URL_DOCKER)" up
 
 ## migrate-down: desfaz a última migration
 .PHONY: migrate-down
 migrate-down:
-	docker run --rm --network $(DB_NETWORK) -v "$(PWD)/migrations":/migrations $(MIGRATE_IMAGE) \
+	docker run --rm --network $(DB_NETWORK) -v "$(PWD)/$(MIGRATIONS_DIR)":/migrations $(MIGRATE_IMAGE) \
 		-path=/migrations -database "$(DATABASE_URL_DOCKER)" down 1
 
 ## migrate-version: mostra a versão aplicada no banco
 .PHONY: migrate-version
 migrate-version:
-	docker run --rm --network $(DB_NETWORK) -v "$(PWD)/migrations":/migrations $(MIGRATE_IMAGE) \
+	docker run --rm --network $(DB_NETWORK) -v "$(PWD)/$(MIGRATIONS_DIR)":/migrations $(MIGRATE_IMAGE) \
 		-path=/migrations -database "$(DATABASE_URL_DOCKER)" version
 
 # --------------------------------------------------------------- container --
@@ -232,7 +237,7 @@ k8s-apply:
 	# As migrations viram ConfigMap gerado a partir dos arquivos .sql, para não
 	# manter o mesmo SQL em dois lugares. Na Fase 5 o Helm faz isso nativamente.
 	kubectl create configmap taskapi-migrations -n $(NAMESPACE) \
-		--from-file=migrations --dry-run=client -o yaml | kubectl apply -f -
+		--from-file=$(MIGRATIONS_DIR) --dry-run=client -o yaml | kubectl apply -f -
 	kubectl apply -f k8s/10-config.yaml -f k8s/20-postgres.yaml -f k8s/30-api.yaml -f k8s/40-ingress.yaml
 	kubectl rollout status deployment/taskapi -n $(NAMESPACE) --timeout=300s
 
@@ -260,6 +265,68 @@ k8s-smoke:
 .PHONY: k8s-delete
 k8s-delete:
 	kubectl delete namespace $(NAMESPACE)
+
+# --------------------------------------------------------------------- helm --
+
+CHART   ?= charts/taskapi
+RELEASE ?= taskapi
+ENV     ?= dev
+
+## helm-deps: baixa as dependências do chart (subchart do Postgres)
+.PHONY: helm-deps
+helm-deps:
+	helm dependency update $(CHART)
+
+## helm-lint: valida o chart contra os values de cada ambiente
+.PHONY: helm-lint
+helm-lint: helm-deps
+	helm lint $(CHART) -f $(CHART)/values-dev.yaml
+	helm lint $(CHART) -f $(CHART)/values-prod.yaml
+
+## helm-template: renderiza os manifestos sem tocar no cluster
+.PHONY: helm-template
+helm-template:
+	helm template $(RELEASE) $(CHART) -f $(CHART)/values-$(ENV).yaml
+
+## helm-install: instala ou atualiza o release (ENV=dev|prod)
+.PHONY: helm-install
+helm-install: helm-deps
+	# --atomic: se o rollout não completar no prazo, o Helm desfaz sozinho, em
+	# vez de deixar o release num estado meio aplicado.
+	# --wait: só retorna quando os pods estiverem prontos de verdade.
+	helm upgrade --install $(RELEASE) $(CHART) \
+		--namespace $(NAMESPACE) --create-namespace \
+		-f $(CHART)/values-$(ENV).yaml \
+		--atomic --wait --timeout 5m
+
+## helm-diff: mostra o que MUDARIA antes de aplicar (exige o plugin helm-diff)
+.PHONY: helm-diff
+helm-diff:
+	helm diff upgrade $(RELEASE) $(CHART) \
+		--namespace $(NAMESPACE) -f $(CHART)/values-$(ENV).yaml || \
+		echo "plugin ausente: helm plugin install https://github.com/databus23/helm-diff"
+
+## helm-test: roda os testes do chart contra o release instalado
+.PHONY: helm-test
+helm-test:
+	helm test $(RELEASE) -n $(NAMESPACE) --logs
+
+## helm-status: revisão atual e histórico do release
+.PHONY: helm-status
+helm-status:
+	@helm status $(RELEASE) -n $(NAMESPACE) --show-resources | head -n 30
+	@echo ""
+	@helm history $(RELEASE) -n $(NAMESPACE)
+
+## helm-rollback: volta para a revisão anterior (ou REV=n)
+.PHONY: helm-rollback
+helm-rollback:
+	helm rollback $(RELEASE) $(REV) -n $(NAMESPACE) --wait
+
+## helm-uninstall: remove o release
+.PHONY: helm-uninstall
+helm-uninstall:
+	helm uninstall $(RELEASE) -n $(NAMESPACE)
 
 # ------------------------------------------------------------------ atalhos --
 
