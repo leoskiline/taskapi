@@ -427,7 +427,16 @@ tf-backend-down:
 .PHONY: tf-migrate
 tf-migrate: tf-backend-up
 	cp $(TF_DIR)/backend-minio.tf.example $(TF_DIR)/backend.tf
-	$(TF) init -migrate-state
+	# -force-copy responde "yes" à pergunta "copiar o state existente para o
+	# novo backend?".
+	#
+	# Custou caro descobrir: canalizar `yes |` NÃO funciona, porque o comando
+	# `yes` imprime "y" e o Terraform aceita exclusivamente a palavra "yes".
+	# Qualquer outra resposta é tratada como "não copie" — e o resultado é um
+	# backend remoto vazio, o state local zerado e um `plan` querendo recriar
+	# a infraestrutura inteira. O que salva nesse caso é o
+	# terraform.tfstate.backup + `terraform state push`.
+	$(TF) init -migrate-state -force-copy
 
 # ------------------------------------------------------------------ atalhos --
 
