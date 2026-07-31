@@ -351,14 +351,31 @@ tf-validate:
 	terraform fmt -check -recursive $(TF_DIR)
 	$(TF) validate
 
-## tf-plan: mostra o que mudaria
+## tf-plan: mostra o que mudaria (exige o cluster já existindo)
 .PHONY: tf-plan
 tf-plan:
 	$(TF) plan
 
+## tf-bootstrap: cria só o cluster — primeiro estágio de um ambiente do zero
+.PHONY: tf-bootstrap
+tf-bootstrap:
+	$(TF) apply -auto-approve -target=module.cluster
+
 ## tf-apply: cria/atualiza cluster + plataforma + aplicação
 .PHONY: tf-apply
 tf-apply:
+	# Dois estágios, e não por capricho: os providers kubernetes e helm são
+	# configurados na fase de PLAN, antes de qualquer recurso existir. Num
+	# ambiente do zero, o contexto do kubeconfig ainda não existe e o plan
+	# falha com "context kind-taskapi does not exist".
+	#
+	# O -target cria só o cluster; o apply seguinte já encontra o kubeconfig
+	# escrito e planeja o resto normalmente. A partir daí, `make tf-apply` em
+	# ambiente existente roda o segundo estágio sem efeito do primeiro.
+	#
+	# A resposta de produção para isso é separar em duas raízes com states
+	# distintos (bootstrap e workloads) — ver ADR 0006.
+	$(TF) apply -auto-approve -target=module.cluster
 	$(TF) apply -auto-approve
 
 ## tf-destroy: derruba tudo que o Terraform criou
