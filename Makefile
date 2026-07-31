@@ -332,7 +332,7 @@ helm-uninstall:
 
 TF_DIR      ?= terraform
 TF          ?= terraform -chdir=$(TF_DIR)
-MINIO_IMAGE ?= minio/minio:latest
+MINIO_IMAGE ?= minio/minio:RELEASE.2025-09-07T16-13-09Z
 MC_IMAGE    ?= minio/mc:latest
 
 ## tf-init: inicializa o Terraform (baixa providers)
@@ -410,7 +410,10 @@ tf-backend-up:
 		curl -fsS http://localhost:9000/minio/health/live >/dev/null 2>&1 && break; \
 		sleep 1; \
 	done
-	@docker run --rm --network host $(MC_IMAGE) sh -c \
+	# --entrypoint sh é necessário: a imagem do mc já tem o próprio mc como
+	# entrypoint, então passar "sh -c ..." como argumento vira subcomando do mc
+	# e falha com "`sh` is not a recognized command".
+	@docker run --rm --network host --entrypoint sh $(MC_IMAGE) -c \
 		"mc alias set local http://localhost:9000 minioadmin minioadmin >/dev/null && \
 		 mc mb --ignore-existing local/taskapi-tfstate"
 	@echo "bucket pronto — console em http://localhost:9001 (minioadmin/minioadmin)"
