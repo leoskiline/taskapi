@@ -9,9 +9,12 @@ metadata:
     {{- include "taskapi.labels" . | nindent 4 }}
   annotations:
     helm.sh/hook: test
-    # Apaga o pod antes de rodar de novo, senão o segundo `helm test` falha
-    # reclamando que o pod já existe.
-    helm.sh/hook-delete-policy: before-hook-creation,hook-succeeded
+    # Só `before-hook-creation`, de propósito. Incluir `hook-succeeded` apaga o
+    # pod no instante em que ele termina — e aí `helm test --logs` falha com
+    # "pods taskapi-test not found", porque não sobrou de onde ler. Mantendo o
+    # pod, a limpeza acontece na execução seguinte e os logs continuam
+    # disponíveis para diagnóstico.
+    helm.sh/hook-delete-policy: before-hook-creation
 spec:
   restartPolicy: Never
   containers:
