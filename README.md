@@ -4,7 +4,7 @@ API REST de tarefas em Go, usada como cobaia do laboratório DevOps descrito em 
 
 A aplicação é deliberadamente pequena. A complexidade deste repositório deve crescer na **esteira** (build, deploy, observabilidade, segurança), não nas regras de negócio.
 
-**Fase atual: 6 — Terraform.** GitOps, observabilidade e DevSecOps chegam nas fases seguintes.
+**Fase atual: 7 — GitOps.** Observabilidade e DevSecOps chegam nas fases seguintes.
 
 ---
 
@@ -207,6 +207,42 @@ Backend S3 apontando para um MinIO em container, com `use_lockfile` para impedir
 - **`yes | terraform init -migrate-state` destrói o rastreamento.** O comando `yes` imprime `y`, e o Terraform aceita exclusivamente a palavra `yes` — qualquer outra resposta significa "não copie o state". O resultado foi backend remoto vazio, state local zerado e um `plan` querendo recriar tudo. Salvou o `terraform.tfstate.backup` + `terraform state push`. O certo é `-force-copy`.
 - **Terraform não vê drift dentro de um release do Helm.** Verificado: `kubectl label namespace` → `plan` acusa e `apply` corrige; `kubectl scale deployment` dentro do release → **`No changes`**. `helm_release` rastreia o release (chart + values), não os objetos gerados. Reconciliação objeto a objeto é trabalho do Argo CD, na Fase 7 — é literalmente a razão de ele existir.
 
+## GitOps
+
+O Argo CD reconcilia o cluster contra este repositório. **Ninguém roda `helm upgrade` nem `kubectl apply` para implantar.**
+
+```
+commit na main → CI (lint, testes, smoke) → imagem no GHCR
+              → job promote ABRE PR mudando gitops/environments/dev/values.yaml
+              → merge do PR = deploy → Argo CD reconcilia
+```
+
+UI em `http://argocd.localtest.me:8081`. Senha inicial:
+
+```bash
+kubectl -n argocd get secret argocd-initial-admin-secret -o jsonpath='{.data.password}' | base64 -d
+```
+
+O que mudou de fronteira: o Terraform passou a cuidar **do cluster e da plataforma**, e parou na porta da aplicação. `module.app` virou condicional e sai por padrão (`manage_app_with_terraform = false`) — dois gerenciadores no mesmo release brigariam a cada `apply`, um reconciliando contra o state e o outro contra o git.
+
+### Self-heal: o que a Fase 6 deixou em aberto
+
+A mesma alteração, nos dois modelos:
+
+| | `kubectl scale deployment taskapi --replicas=3` |
+|---|---|
+| Terraform (Fase 6) | `plan` → **`No changes`** |
+| Argo CD (Fase 7) | `OutOfSync` em 5s, **revertido para 1 réplica em ~10s** |
+
+E `kubectl delete service taskapi` → recriado em ~10s. `helm_release` rastreia o release (chart + values); o Argo reconcilia objeto a objeto. É a razão concreta de ele existir.
+
+### Detalhes que valem entender
+
+- **O runner do CI não tem credencial de cluster.** Ele só escreve em git. Um workflow comprometido propõe um PR — não implanta nada.
+- **`paths-ignore: gitops/**` no gatilho de `push`** quebra o loop CI→commit→CI. O gatilho de `pull_request` fica **sem** filtro de propósito: a branch protection exige os checks, e um PR sem check nenhum ficaria travado para sempre.
+- **`sources` múltiplas com `$values`.** O chart vem de `charts/taskapi`, os values de `gitops/environments/<env>`. É o que separa "como implantar" de "o que está implantado" — e o que torna a migração para um repositório GitOps dedicado uma troca de `repoURL`.
+- **As Applications entram pelo chart `argocd-apps`, não por `kubernetes_manifest`.** Este último valida o recurso contra o schema do cluster na fase de *plan*, e o CRD `Application` só existe depois que o Argo estiver instalado — o mesmo problema de ordenação do [ADR 0006](docs/decisions/0006-terraform-provider-depende-de-recurso.md).
+
 ## Decisões que importam para as próximas fases
 
 **Sem framework web.** Roteamento com o `net/http` do Go 1.22+ (`mux.HandleFunc("GET /tasks/{id}", ...)`). Menos dependência para atualizar e menos superfície para o Trivy reclamar na Fase 9.
@@ -247,4 +283,4 @@ docker-compose.yml  banco + migrations + API, com ordem garantida por health
 
 ## Próxima fase
 
-**Fase 7 — GitOps:** Argo CD reconciliando o cluster contra o git, com repositório de manifestos separado e o CI abrindo PR para promover a imagem.
+**Fase 8 — Observabilidade:** métricas na aplicação, Prometheus e Grafana com os quatro sinais de ouro, Loki para logs, e um alerta disparado de propósito.
