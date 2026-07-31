@@ -4,7 +4,7 @@ API REST de tarefas em Go, usada como cobaia do laboratório DevOps descrito em 
 
 A aplicação é deliberadamente pequena. A complexidade deste repositório deve crescer na **esteira** (build, deploy, observabilidade, segurança), não nas regras de negócio.
 
-**Fase atual: 7 — GitOps.** Observabilidade e DevSecOps chegam nas fases seguintes.
+**Fase atual: 8 — Observabilidade.** DevSecOps e nuvem chegam nas fases seguintes.
 
 ---
 
@@ -242,6 +242,41 @@ E `kubectl delete service taskapi` → recriado em ~10s. `helm_release` rastreia
 - **`paths-ignore: gitops/**` no gatilho de `push`** quebra o loop CI→commit→CI. O gatilho de `pull_request` fica **sem** filtro de propósito: a branch protection exige os checks, e um PR sem check nenhum ficaria travado para sempre.
 - **`sources` múltiplas com `$values`.** O chart vem de `charts/taskapi`, os values de `gitops/environments/<env>`. É o que separa "como implantar" de "o que está implantado" — e o que torna a migração para um repositório GitOps dedicado uma troca de `repoURL`.
 - **As Applications entram pelo chart `argocd-apps`, não por `kubernetes_manifest`.** Este último valida o recurso contra o schema do cluster na fase de *plan*, e o CRD `Application` só existe depois que o Argo estiver instalado — o mesmo problema de ordenação do [ADR 0006](docs/decisions/0006-terraform-provider-depende-de-recurso.md).
+
+## Observabilidade
+
+A aplicação expõe `/metrics`; o Prometheus coleta via `ServiceMonitor`; os alertas vêm de um `PrometheusRule` no próprio chart.
+
+- Grafana: `http://grafana.localtest.me:8081`
+- Prometheus: `kubectl -n monitoring port-forward svc/kube-prometheus-stack-prometheus 9090:9090`
+
+### O SLO
+
+99% dos requests abaixo de **300ms**, taxa de erro abaixo de **5%**. Os dois números vivem em `values.yaml` (`metrics.slo`) e alimentam alerta e dashboard a partir da **mesma recording rule** — é o que evita o clássico "o alerta disparou mas o gráfico está verde".
+
+O dashboard tem os quatro sinais de ouro (latência por percentil, tráfego, erros, saturação) mais um painel de **error budget**: com SLO de 99%, sobra 1% de orçamento; quando ele zera, o sinal é parar de lançar e estabilizar.
+
+### Cardinalidade: o detalhe que derruba Prometheus
+
+O label `route` guarda o **padrão** da rota (`GET /tasks/{id}`), nunca o caminho concreto (`/tasks/42`). Cada combinação de labels é uma série temporal; usar o caminho faria uma API com muitos IDs gerar milhões de séries.
+
+Há teste que falha se isso regredir — e a verificação no cluster: **4 séries** em `http_requests_total`, uma por rota. Requests que não casam com rota nenhuma são agrupados em `route="desconhecida"`, senão um scanner varrendo URLs criaria uma série a cada 404.
+
+### O alerta, disparado de propósito
+
+Postgres derrubado, tráfego contra o pod:
+
+```
+t+30s  inactive   2.5%
+t+40s  inactive  10.9%
+t+50s  pending   19.4%
+t+80s  pending   52.0%
+t+90s  firing    52.0%   → Alertmanager: "taskapi com taxa de erro de 52%"
+```
+
+O `for: 2m` é o que separa alerta de ruído: sem ele, um único 500 durante um rollout acordaria alguém de madrugada.
+
+**Um detalhe que só aparece quando as fases se encontram:** na primeira tentativa o alerta não disparou, porque o `selfHeal` do Argo CD (Fase 7) religou o Postgres em ~10 segundos e desfez a injeção de falha. Foi preciso pausar a reconciliação antes de injetar — que é exatamente o que um plantonista faz antes de mexer em produção.
 
 ## Decisões que importam para as próximas fases
 
