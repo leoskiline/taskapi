@@ -30,31 +30,35 @@ resource "helm_release" "ingress_nginx" {
   wait    = true
   timeout = 600
 
-  # A receita do kind: o controller usa hostPort e roda no nó rotulado
-  # ingress-ready, em vez de depender de um LoadBalancer que não existe aqui.
-  set = [
-    {
-      name  = "controller.hostPort.enabled"
-      value = "true"
-    },
-    {
-      name  = "controller.service.type"
-      value = "NodePort"
-    },
-    {
-      name  = "controller.nodeSelector.ingress-ready"
-      value = "true"
-    },
-    {
-      name  = "controller.admissionWebhooks.enabled"
-      value = "false"
-    },
-  ]
-
-  # Tolera o taint do control-plane, senão o pod nunca é agendado no nó certo.
+  # Tudo via YAML, nada via `set`.
+  #
+  # Motivo concreto, aprendido quebrando: `set` usa a inferência de tipo do
+  # Helm, que transforma "true" em booleano. Só que `nodeSelector` exige
+  # string, e o apply morre com "cannot unmarshal bool into Go struct field
+  # PodSpec.spec.template.spec.nodeSelector of type string". Em YAML o tipo é
+  # explícito e a ambiguidade desaparece.
   values = [
     yamlencode({
       controller = {
+        # Receita do kind: o controller escuta direto nas portas do nó, em vez
+        # de depender de um LoadBalancer que não existe aqui.
+        hostPort = {
+          enabled = true
+        }
+        service = {
+          type = "NodePort"
+        }
+        # Aspas importam: o label é a string "true", não o booleano.
+        nodeSelector = {
+          "ingress-ready" = "true"
+        }
+        # Sem o webhook de admissão: ele exige certificado gerado por Job, e
+        # em laboratório só adiciona um ponto de falha na subida.
+        admissionWebhooks = {
+          enabled = false
+        }
+        # Tolera o taint do control-plane, senão o pod nunca é agendado no
+        # único nó que tem o label acima.
         tolerations = [
           {
             key      = "node-role.kubernetes.io/control-plane"
