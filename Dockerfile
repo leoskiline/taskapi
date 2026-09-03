@@ -3,7 +3,7 @@
 # ---------------------------------------------------------------- build ------
 # O estágio de build carrega o toolchain Go inteiro (~800 MB). Nada disso vai
 # para a imagem final — é justamente esse o ponto do multi-stage.
-FROM golang:1.26-alpine AS build
+FROM golang:1.27-alpine AS build
 
 WORKDIR /src
 

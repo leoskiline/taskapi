@@ -9,7 +9,7 @@
 #   2. Roda como root. Uma falha na aplicação vira root dentro do container.
 #   3. `go build` sem flags deixa símbolos de debug e caminhos absolutos da
 #      máquina de build embutidos no binário.
-FROM golang:1.26
+FROM golang:1.27
 
 WORKDIR /src
 COPY . .
